@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Visper</string>
+    <string name="terminal_prompt">visper@device:~$ </string>
+    <string name="status_ready">[ENGINE READY]</string>
+    <string name="status_generating">[GENERATING...]</string>
+    <string name="status_listening">[RECORDING AUDIO...]</string>
+</resources>
