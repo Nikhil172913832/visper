@@ -353,8 +353,8 @@ private fun TerminalCommandBar(
             )
             Spacer(modifier = Modifier.weight(1f))
             TerminalButton(
-                label = if (engineState == EngineState.GENERATING) "[...]" else "[RUN]",
-                color = TerminalGreen,
+                label = if (engineState == EngineState.GENERATING) "[HALT]" else "[RUN]",
+                color = if (engineState == EngineState.GENERATING) TerminalRed else TerminalGreen,
                 onClick = onSubmit
             )
         }

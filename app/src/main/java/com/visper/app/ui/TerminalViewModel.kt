@@ -42,6 +42,7 @@ class TerminalViewModel(
 
     private val engine: InferenceEngine = VisperEngine(application)
     private val audioManager = AudioTranscriptionManager(application)
+    private var generationJob: kotlinx.coroutines.Job? = null
 
     private val _uiState = MutableStateFlow(
         TerminalUiState(
@@ -226,7 +227,23 @@ class TerminalViewModel(
         )
     }
 
+    fun cancelGeneration() {
+        generationJob?.cancel()
+        generationJob = null
+        engine.resetContext()
+        _uiState.value = _uiState.value.copy(engineState = EngineState.READY)
+        val updated = _uiState.value.messages.map { msg ->
+            if (msg.isStreaming) msg.copy(isStreaming = false) else msg
+        }
+        _uiState.value = _uiState.value.copy(messages = updated)
+    }
+
     fun submitPrompt() {
+        if (_uiState.value.engineState == EngineState.GENERATING) {
+            cancelGeneration()
+            return
+        }
+
         val prompt = _uiState.value.inputText.trim()
         val currentImage = _uiState.value.attachedImageBitmap
         val currentImageAscii = _uiState.value.attachedImageAscii
@@ -342,7 +359,7 @@ class TerminalViewModel(
         )
 
         // Stream AI response
-        viewModelScope.launch {
+        generationJob = viewModelScope.launch {
             val responseId = java.util.UUID.randomUUID().toString()
             val initialAiMsg = ChatMessage(
                 id = responseId,

@@ -119,10 +119,28 @@ class LlamaCppEngine(
 
         val startTime = System.currentTimeMillis()
         var tokenCount = 0
+        var consecutiveRepeatCount = 0
+        var lastToken = ""
 
         try {
             engine.sendUserPrompt(fullPrompt, 1024).collect { token ->
                 tokenCount++
+
+                val trimmed = token.trim().lowercase()
+                if (trimmed.length > 2) {
+                    if (trimmed == lastToken) {
+                        consecutiveRepeatCount++
+                        if (consecutiveRepeatCount >= 4) {
+                            Log.w(TAG, "Repetition loop detected for token '$token'. Halting.")
+                            emit("\n[Visper: Loop halted]")
+                            throw kotlinx.coroutines.CancellationException("Repetition loop halted")
+                        }
+                    } else {
+                        lastToken = trimmed
+                        consecutiveRepeatCount = 0
+                    }
+                }
+
                 emit(token)
 
                 if (tokenCount % 4 == 0) {
@@ -143,6 +161,9 @@ class LlamaCppEngine(
                 tokensPerSecond = finalTps,
                 contextTokensUsed = tokenCount
             )
+            _state.value = EngineState.READY
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            Log.i(TAG, "Generation interrupted/cancelled: ${e.message}")
             _state.value = EngineState.READY
         } catch (e: Exception) {
             Log.e(TAG, "Generation error in LlamaCppEngine", e)
