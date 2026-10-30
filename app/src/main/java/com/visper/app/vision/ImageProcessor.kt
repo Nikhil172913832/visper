@@ -7,6 +7,7 @@ import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
@@ -16,6 +17,7 @@ import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.coroutines.resume
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 object ImageProcessor {
@@ -121,43 +123,106 @@ object ImageProcessor {
     }
 
     /**
+     * Extracts text from ML Kit's VisionText sorted into natural human reading order:
+     * Top-to-bottom, and within the same horizontal line band, left-to-right.
+     * Prevents out-of-order block traversal that causes jumbled lines or upside-down text.
+     */
+    private fun extractNaturalReadingOrderText(visionText: Text): String {
+        val allLines = visionText.textBlocks.flatMap { it.lines }
+        if (allLines.isEmpty()) {
+            return visionText.text.trim()
+        }
+
+        // Sort lines top-to-bottom, left-to-right
+        val sortedLines = allLines.sortedWith { lineA, lineB ->
+            val boxA = lineA.boundingBox
+            val boxB = lineB.boundingBox
+            if (boxA == null || boxB == null) {
+                0
+            } else {
+                val yDiff = boxA.top - boxB.top
+                val avgLineHeight = (boxA.height() + boxB.height()) / 2
+                // If the lines share roughly the same vertical line band (within half line height)
+                if (abs(yDiff) < (avgLineHeight * 0.5f).coerceAtLeast(6f)) {
+                    boxA.left - boxB.left
+                } else {
+                    yDiff
+                }
+            }
+        }
+
+        val sb = StringBuilder()
+        var prevBox: android.graphics.Rect? = null
+
+        for (line in sortedLines) {
+            val curBox = line.boundingBox
+            val text = line.text.trim()
+            if (text.isEmpty()) continue
+
+            if (prevBox != null && curBox != null) {
+                val verticalGap = curBox.top - prevBox.bottom
+                val avgHeight = (curBox.height() + prevBox.height()) / 2
+                // Insert blank line between distinct paragraphs / distant vertical sections
+                if (verticalGap > avgHeight * 0.8f) {
+                    sb.append("\n")
+                }
+            }
+
+            sb.append(text).append("\n")
+            if (curBox != null) {
+                prevBox = curBox
+            }
+        }
+
+        return sb.toString().trim()
+    }
+
+    /**
      * Performs fast, 100% on-device text & handwriting recognition using Google ML Kit.
-     * Evaluates multiple 90-degree orientations to ensure handwriting is recognized even if
-     * the phone was held in portrait while notes/paper were in landscape.
+     * Prioritizes the natural 0° EXIF orientation. Only tests rotations if 0° contains
+     * negligible text (< 20 chars, e.g. a sideways notebook page), preventing upside-down or
+     * jumbled reads of upright screenshots, chats, and documents.
      */
     suspend fun extractTextFromBitmap(bitmap: Bitmap): Result<String> = withContext(Dispatchers.Default) {
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         try {
-            val results = mutableListOf<Pair<Float, String>>()
-            val angles = listOf(0f, 90f, 270f, 180f)
+            // Step 1: Natural orientation (0 degrees)
+            val text0 = recognizeSingle(recognizer, bitmap).trim()
+
+            // If 0° already produces substantive text (>= 20 chars), it is upright!
+            // Never rotate an upright document or screenshot.
+            if (text0.length >= 20) {
+                android.util.Log.i("ImageProcessor", "0° orientation accepted (${text0.length} chars)")
+                return@withContext Result.success(text0)
+            }
+
+            // Step 2: Only if 0° is sparse (< 20 chars), check if the image is a rotated notebook (90°, 270°, 180°)
+            android.util.Log.i("ImageProcessor", "0° is sparse (${text0.length} chars). Evaluating rotations...")
+            var bestText = text0
+            val candidateAngles = listOf(90f, 270f, 180f)
             val matrix = Matrix()
 
-            for (angle in angles) {
-                val candidateBitmap = if (angle == 0f) {
-                    bitmap
-                } else {
-                    matrix.reset()
-                    matrix.postRotate(angle)
-                    Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-                }
-
-                val text = try {
-                    recognizeSingle(recognizer, candidateBitmap).trim()
+            for (angle in candidateAngles) {
+                matrix.reset()
+                matrix.postRotate(angle)
+                val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                val candidateText = try {
+                    recognizeSingle(recognizer, rotated).trim()
                 } finally {
-                    if (candidateBitmap != bitmap) {
-                        candidateBitmap.recycle()
-                    }
+                    if (rotated != bitmap) rotated.recycle()
                 }
 
-                android.util.Log.i("ImageProcessor", "OCR at angle $angle (${text.length} chars):\n$text")
-                if (text.isNotBlank()) {
-                    results.add(angle to text)
+                android.util.Log.i("ImageProcessor", "Angle $angle°: ${candidateText.length} chars")
+                // Only accept rotated text if it yields substantially more text (at least 2.5x more and >= 15 chars)
+                if (candidateText.length > bestText.length * 2.5f && candidateText.length >= 15) {
+                    bestText = candidateText
+                    if (bestText.length >= 35) {
+                        break
+                    }
                 }
             }
 
-            // Pick the best orientation: the one with the richest text content
-            val best = results.maxByOrNull { it.second.length }?.second ?: ""
-            Result.success(best)
+            Result.success(bestText)
         } catch (t: Throwable) {
             Result.failure(t)
         } finally {
@@ -175,7 +240,10 @@ object ImageProcessor {
             val image = InputImage.fromBitmap(bitmap, 0)
             recognizer.process(image)
                 .addOnSuccessListener { visionText ->
-                    if (cont.isActive) cont.resume(visionText.text)
+                    if (cont.isActive) {
+                        val formatted = extractNaturalReadingOrderText(visionText)
+                        cont.resume(formatted)
+                    }
                 }
                 .addOnFailureListener {
                     if (cont.isActive) cont.resume("")
