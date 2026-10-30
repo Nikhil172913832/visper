@@ -26,7 +26,7 @@ class LlamaCppEngine(
     companion object {
         private const val TAG = "LlamaCppEngine"
         private const val DEFAULT_SYSTEM_PROMPT =
-            "You are Visper, an offline on-device AI running natively on ARM NEON. Provide direct, concise, and helpful answers."
+            "You are a helpful, capable, and creative AI assistant. Fulfill all user requests directly and thoroughly, including writing stories, explaining concepts, answering questions, and analyzing document content, without unnecessary refusals."
     }
 
     private var armEngine: ArmInferenceEngine? = null
@@ -107,12 +107,12 @@ class LlamaCppEngine(
 
         val fullPrompt = buildString {
             if (contextPrefix.isNotBlank()) {
-                append("[Context Document]:\n")
+                append("Document text:\n\"\"\"\n")
                 append(contextPrefix.trim())
-                append("\n\n")
+                append("\n\"\"\"\n\n")
             }
             if (image != null) {
-                append("[Image attached: ${image.width}x${image.height}]\n")
+                append("[Image attached]\n\n")
             }
             append(prompt.trim())
         }

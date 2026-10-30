@@ -173,32 +173,46 @@ object DocumentParser {
             }
         }
 
-        val result = sb.toString().trim()
-        return if (result.isBlank()) {
+        val cleanedResult = sb.toString().trim()
+            .replace(Regex("(?<=\\b[a-zA-Z]) (?=[a-zA-Z]\\b)"), "")
+            .replace(Regex(" +"), " ")
+
+        return if (cleanedResult.isBlank()) {
             "[PDF Document loaded: text layer is compressed or image-based. See attached page preview.]"
         } else {
-            result
+            cleanedResult
         }
     }
 
     private fun extractWordsFromPdfStream(text: String): List<String> {
         val words = mutableListOf<String>()
         // Match string literals (text) Tj or ' or "
-        val singleTjRegex = Regex("\\(([^)]{1,200})\\)\\s*(?:Tj|'|\")")
+        val singleTjRegex = Regex("\\(([^)]{1,300})\\)\\s*(?:Tj|'|\")")
         // Match string arrays [(t1) 20 (t2)] TJ
-        val arrayTjRegex = Regex("\\[(.*?)\\]\\s*TJ")
-        val innerStringRegex = Regex("\\(([^)]+)\\)")
+        val arrayTjRegex = Regex("\\[(.*?)\\]\\s*TJ", RegexOption.DOT_MATCHES_ALL)
+        val tokenRegex = Regex("\\(([^)]*)\\)|(-?\\d+)")
 
-        // Check array TJ first
+        // 1. Process array TJ (kerning arrays)
         for (match in arrayTjRegex.findAll(text)) {
             val arrayBody = match.groupValues[1]
-            for (inner in innerStringRegex.findAll(arrayBody)) {
-                val str = cleanPdfString(inner.groupValues[1])
-                if (str.isNotBlank()) words.add(str)
+            val phrase = StringBuilder()
+            for (m in tokenRegex.findAll(arrayBody)) {
+                val strPart = m.groups[1]?.value
+                val numPart = m.groups[2]?.value
+                if (strPart != null) {
+                    phrase.append(cleanPdfString(strPart))
+                } else if (numPart != null) {
+                    val num = numPart.toIntOrNull() ?: 0
+                    if (num < -120) { // Kerning indicating space
+                        phrase.append(" ")
+                    }
+                }
             }
+            val cleaned = phrase.toString().trim()
+            if (cleaned.isNotBlank()) words.add(cleaned)
         }
 
-        // Check single Tj
+        // 2. Process single Tj
         for (match in singleTjRegex.findAll(text)) {
             val str = cleanPdfString(match.groupValues[1])
             if (str.isNotBlank()) words.add(str)
@@ -208,11 +222,13 @@ object DocumentParser {
     }
 
     private fun cleanPdfString(raw: String): String {
-        return raw.replace("\\(", "(")
+        return raw.replace(Regex("\\\\[0-7]{3}"), "") // remove octal escapes like \256
+            .replace("\\(", "(")
             .replace("\\)", ")")
             .replace("\\n", " ")
             .replace("\\r", " ")
             .replace("\\t", " ")
+            .replace(Regex("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]"), "")
             .trim()
     }
 

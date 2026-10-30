@@ -371,9 +371,7 @@ class TerminalViewModel(
                 messages = _uiState.value.messages + initialAiMsg
             )
 
-            val contextPrefix = currentDoc?.textContent?.let {
-                "--- BEGIN ATTACHED DOCUMENT: ${currentDoc.fileName} ---\n$it\n--- END ATTACHED DOCUMENT ---"
-            } ?: ""
+            val contextPrefix = currentDoc?.textContent ?: ""
 
             val startTime = System.currentTimeMillis()
             var firstTokenTime: Long? = null
