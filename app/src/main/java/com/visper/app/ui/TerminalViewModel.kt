@@ -29,6 +29,7 @@ data class TerminalUiState(
     val attachedImageUri: Uri? = null,
     val attachedImageBitmap: Bitmap? = null,
     val attachedImageAscii: String? = null,
+    val attachedImageText: String? = null,
     val attachedDoc: ParsedDocument? = null,
     val isRecordingAudio: Boolean = false,
     val audioWaveformVisual: String = "",
@@ -171,20 +172,53 @@ class TerminalViewModel(
 
     fun onImageSelected(uri: Uri) {
         viewModelScope.launch {
-            val bitmap = ImageProcessor.decodeSampledBitmapFromUri(getApplication(), uri)
-            val ascii = bitmap?.let { ImageProcessor.toAsciiArt(it, targetCols = 38) }
-            _uiState.value = _uiState.value.copy(
-                attachedImageUri = uri,
-                attachedImageBitmap = bitmap,
-                attachedImageAscii = ascii
-            )
             appendMessage(
                 ChatMessage(
                     sender = MessageSender.SYSTEM,
-                    text = "[IMG ATTACHED] ${bitmap?.width}x${bitmap?.height} px -> ASCII vision tensor generated.",
-                    attachment = bitmap?.let {
-                        Attachment.Image(uri, it.width, it.height, ascii)
-                    }
+                    text = "[IMG ATTACHING] Decoding image & analyzing handwriting / text..."
+                )
+            )
+            val bitmap = ImageProcessor.decodeSampledBitmapFromUri(getApplication(), uri, 1600, 1600)
+            if (bitmap == null) {
+                appendMessage(
+                    ChatMessage(
+                        sender = MessageSender.ERROR,
+                        text = "[ERROR] Could not decode image."
+                    )
+                )
+                return@launch
+            }
+
+            val ascii = ImageProcessor.toAsciiArt(bitmap, targetCols = 38)
+            val ocrResult = ImageProcessor.extractTextFromBitmap(bitmap)
+            val extractedText = ocrResult.getOrNull()?.trim() ?: ""
+
+            _uiState.value = _uiState.value.copy(
+                attachedImageUri = uri,
+                attachedImageBitmap = bitmap,
+                attachedImageAscii = ascii,
+                attachedImageText = extractedText.ifEmpty { null }
+            )
+
+            val statusText = if (extractedText.isNotEmpty()) {
+                val charCount = extractedText.length
+                val lineCount = extractedText.lines().count()
+                "[IMG ATTACHED] ${bitmap.width}x${bitmap.height} px -> Handwriting/Text recognized ($charCount chars, $lineCount lines)."
+            } else {
+                "[IMG ATTACHED] ${bitmap.width}x${bitmap.height} px -> ASCII vision tensor generated (no text detected)."
+            }
+
+            appendMessage(
+                ChatMessage(
+                    sender = MessageSender.SYSTEM,
+                    text = statusText,
+                    attachment = Attachment.Image(
+                        uri = uri,
+                        width = bitmap.width,
+                        height = bitmap.height,
+                        asciiPreview = ascii,
+                        recognizedText = extractedText.ifEmpty { null }
+                    )
                 )
             )
         }
@@ -223,6 +257,7 @@ class TerminalViewModel(
             attachedImageUri = null,
             attachedImageBitmap = null,
             attachedImageAscii = null,
+            attachedImageText = null,
             attachedDoc = null
         )
     }
@@ -246,7 +281,9 @@ class TerminalViewModel(
 
         val prompt = _uiState.value.inputText.trim()
         val currentImage = _uiState.value.attachedImageBitmap
+        val currentImageUri = _uiState.value.attachedImageUri
         val currentImageAscii = _uiState.value.attachedImageAscii
+        val currentImageText = _uiState.value.attachedImageText
         val currentDoc = _uiState.value.attachedDoc
 
         if (prompt.isBlank() && currentImage == null && currentDoc == null) {
@@ -324,7 +361,17 @@ class TerminalViewModel(
         }
 
         val displayPrompt = prompt.ifBlank {
-            if (currentImage != null) "[Analyze Image]" else "[Analyze Document]"
+            when {
+                currentImage != null -> {
+                    if (!currentImageText.isNullOrBlank()) {
+                        "Transcribe and format the handwritten / printed text in this image."
+                    } else {
+                        "[Analyze Image]"
+                    }
+                }
+                currentDoc != null -> "[Analyze Document]"
+                else -> ""
+            }
         }
 
         // Add user message
@@ -332,11 +379,12 @@ class TerminalViewModel(
             sender = MessageSender.USER,
             text = displayPrompt,
             attachment = when {
-                currentImage != null -> Attachment.Image(
-                    uri = _uiState.value.attachedImageUri!!,
+                currentImage != null && currentImageUri != null -> Attachment.Image(
+                    uri = currentImageUri,
                     width = currentImage.width,
                     height = currentImage.height,
-                    asciiPreview = currentImageAscii
+                    asciiPreview = currentImageAscii,
+                    recognizedText = currentImageText
                 )
                 currentDoc != null -> Attachment.Document(
                     uri = currentDoc.fileName.let { Uri.parse("file://$it") },
@@ -355,6 +403,7 @@ class TerminalViewModel(
             attachedImageUri = null,
             attachedImageBitmap = null,
             attachedImageAscii = null,
+            attachedImageText = null,
             attachedDoc = null
         )
 
@@ -371,7 +420,17 @@ class TerminalViewModel(
                 messages = _uiState.value.messages + initialAiMsg
             )
 
-            val contextPrefix = currentDoc?.textContent ?: ""
+            val contextPrefix = buildString {
+                if (currentDoc != null) {
+                    append(currentDoc.textContent)
+                }
+                if (!currentImageText.isNullOrBlank()) {
+                    if (isNotEmpty()) append("\n\n")
+                    append("Text/Handwriting recognized from attached image:\n\"\"\"\n")
+                    append(currentImageText.trim())
+                    append("\n\"\"\"")
+                }
+            }
 
             val startTime = System.currentTimeMillis()
             var firstTokenTime: Long? = null

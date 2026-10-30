@@ -36,9 +36,15 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Visper">
 
+        <!-- ML Kit on-device text / handwriting recognition model -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="ocr" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

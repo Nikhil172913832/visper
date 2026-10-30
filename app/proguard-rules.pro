@@ -48,3 +48,8 @@
     public static int v(...);
     public static int d(...);
 }
+
+# ML Kit Text Recognition on-device rules
+-keep class com.google.mlkit.** { *; }
+-dontwarn com.google.mlkit.**
+

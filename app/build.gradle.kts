@@ -95,4 +95,7 @@ dependencies {
 
     // llama.cpp native engine runtime
     implementation(files("libs/llama-android.aar"))
+
+    // On-Device ML Kit Text / Handwriting Recognition OCR
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 }

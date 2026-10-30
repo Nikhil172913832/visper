@@ -3,30 +3,53 @@ package com.visper.app.vision
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.coroutines.resume
 import kotlin.math.roundToInt
 
 object ImageProcessor {
 
     private const val ASCII_CHARS = "@%#*+=-:. "
 
+    private fun openStream(context: Context, uri: Uri): InputStream? {
+        return try {
+            if (uri.scheme == "file" && uri.path != null) {
+                java.io.File(uri.path!!).inputStream()
+            } else {
+                context.contentResolver.openInputStream(uri)
+            }
+        } catch (_: Exception) {
+            try {
+                context.contentResolver.openInputStream(uri)
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
     /**
      * Decode and downsample bitmap with zero heap spikes using inJustDecodeBounds.
-     * Prevents OutOfMemory errors on 50MP+ device cameras.
+     * Corrects EXIF rotation to ensure handwriting & photos are upright.
      */
     suspend fun decodeSampledBitmapFromUri(
         context: Context,
         uri: Uri,
-        reqWidth: Int = 512,
-        reqHeight: Int = 512
+        reqWidth: Int = 1600,
+        reqHeight: Int = 1600
     ): Bitmap? = withContext(Dispatchers.IO) {
         try {
-            val firstInput = context.contentResolver.openInputStream(uri) ?: return@withContext null
+            val firstInput = openStream(context, uri) ?: return@withContext null
             val options = BitmapFactory.Options().apply {
                 inJustDecodeBounds = true
             }
@@ -36,15 +59,43 @@ object ImageProcessor {
 
             options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
             options.inJustDecodeBounds = false
-            // Use RGB_565 or ARGB_8888; ARGB_8888 is safe for vision models
             options.inPreferredConfig = Bitmap.Config.ARGB_8888
 
-            val secondInput = context.contentResolver.openInputStream(uri) ?: return@withContext null
+            val secondInput = openStream(context, uri) ?: return@withContext null
             val bitmap = secondInput.use { stream ->
                 BitmapFactory.decodeStream(stream, null, options)
+            } ?: return@withContext null
+
+            // Read and apply EXIF orientation
+            val orientation = try {
+                openStream(context, uri)?.use { stream ->
+                    val exif = ExifInterface(stream)
+                    exif.getAttributeInt(
+                        ExifInterface.TAG_ORIENTATION,
+                        ExifInterface.ORIENTATION_NORMAL
+                    )
+                } ?: ExifInterface.ORIENTATION_NORMAL
+            } catch (_: Exception) {
+                ExifInterface.ORIENTATION_NORMAL
             }
 
-            bitmap
+            val degrees = when (orientation) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                else -> 0f
+            }
+
+            if (degrees != 0f) {
+                val matrix = Matrix().apply { postRotate(degrees) }
+                val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                if (rotated != bitmap) {
+                    bitmap.recycle()
+                }
+                rotated
+            } else {
+                bitmap
+            }
         } catch (e: Exception) {
             null
         }
@@ -70,13 +121,77 @@ object ImageProcessor {
     }
 
     /**
-     * Converts a bitmap into an ASCII art string for the terminal UI.
-     * Renders at roughly terminal width (e.g. 40-50 characters wide).
+     * Performs fast, 100% on-device text & handwriting recognition using Google ML Kit.
+     * Evaluates multiple 90-degree orientations to ensure handwriting is recognized even if
+     * the phone was held in portrait while notes/paper were in landscape.
      */
-    fun toAsciiArt(bitmap: Bitmap, targetCols: Int = 42): String {
+    suspend fun extractTextFromBitmap(bitmap: Bitmap): Result<String> = withContext(Dispatchers.Default) {
+        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        try {
+            val results = mutableListOf<Pair<Float, String>>()
+            val angles = listOf(0f, 90f, 270f, 180f)
+            val matrix = Matrix()
+
+            for (angle in angles) {
+                val candidateBitmap = if (angle == 0f) {
+                    bitmap
+                } else {
+                    matrix.reset()
+                    matrix.postRotate(angle)
+                    Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                }
+
+                val text = try {
+                    recognizeSingle(recognizer, candidateBitmap).trim()
+                } finally {
+                    if (candidateBitmap != bitmap) {
+                        candidateBitmap.recycle()
+                    }
+                }
+
+                android.util.Log.i("ImageProcessor", "OCR at angle $angle (${text.length} chars):\n$text")
+                if (text.isNotBlank()) {
+                    results.add(angle to text)
+                }
+            }
+
+            // Pick the best orientation: the one with the richest text content
+            val best = results.maxByOrNull { it.second.length }?.second ?: ""
+            Result.success(best)
+        } catch (t: Throwable) {
+            Result.failure(t)
+        } finally {
+            try {
+                recognizer.close()
+            } catch (_: Exception) {}
+        }
+    }
+
+    private suspend fun recognizeSingle(
+        recognizer: com.google.mlkit.vision.text.TextRecognizer,
+        bitmap: Bitmap
+    ): String = suspendCancellableCoroutine { cont ->
+        try {
+            val image = InputImage.fromBitmap(bitmap, 0)
+            recognizer.process(image)
+                .addOnSuccessListener { visionText ->
+                    if (cont.isActive) cont.resume(visionText.text)
+                }
+                .addOnFailureListener {
+                    if (cont.isActive) cont.resume("")
+                }
+        } catch (_: Throwable) {
+            if (cont.isActive) cont.resume("")
+        }
+    }
+
+    /**
+     * Converts a bitmap into an ASCII art string for the terminal UI.
+     * Renders at roughly terminal width (e.g. 38-42 characters wide).
+     */
+    fun toAsciiArt(bitmap: Bitmap, targetCols: Int = 38): String {
         val aspectRatio = bitmap.height.toFloat() / bitmap.width.toFloat()
-        // Characters in terminal are roughly 2x taller than they are wide
-        val targetRows = ((targetCols * aspectRatio) * 0.55f).roundToInt().coerceAtLeast(8)
+        val targetRows = ((targetCols * aspectRatio) * 0.55f).roundToInt().coerceIn(6, 40)
 
         val scaled = Bitmap.createScaledBitmap(bitmap, targetCols, targetRows, true)
         val sb = StringBuilder()

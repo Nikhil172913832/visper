@@ -33,6 +33,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
+        handleIncomingIntent(intent)
+
         setContent {
             VisperTheme {
                 Surface(
@@ -44,6 +46,31 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingIntent(intent)
+    }
+
+    private fun handleIncomingIntent(intent: android.content.Intent?) {
+        if (intent == null) return
+        android.util.Log.i("MainActivity", "handleIncomingIntent extras: ${intent.extras}")
+        val testImg = intent.getStringExtra("test_image_path")
+        if (!testImg.isNullOrBlank()) {
+            val file = java.io.File(testImg)
+            android.util.Log.i("MainActivity", "test_image_path: $testImg (exists=${file.exists()})")
+            if (file.exists()) {
+                viewModel.onImageSelected(android.net.Uri.fromFile(file))
+            }
+        }
+        val testPrompt = intent.getStringExtra("test_prompt")
+        if (!testPrompt.isNullOrBlank()) {
+            android.util.Log.i("MainActivity", "test_prompt: $testPrompt")
+            viewModel.onInputTextChanged(testPrompt)
+            viewModel.submitPrompt()
         }
     }
 

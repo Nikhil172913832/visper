@@ -230,24 +230,52 @@ private fun TerminalMessageItem(message: ChatMessage) {
             )
         }
 
-        // Render visual ASCII preview for images
-        if (message.attachment is Attachment.Image && message.attachment.asciiPreview != null) {
-            Spacer(modifier = Modifier.height(4.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFF0A0A0A))
-                    .border(0.5.dp, TerminalBorder)
-                    .padding(6.dp)
-            ) {
-                Text(
-                    text = message.attachment.asciiPreview,
-                    style = TerminalMonoStyle.copy(
-                        color = TerminalGreen.copy(alpha = 0.85f),
-                        fontSize = 8.sp,
-                        lineHeight = 9.sp
+        // Render visual ASCII preview & recognized handwriting / text for images
+        if (message.attachment is Attachment.Image) {
+            val img = message.attachment
+            if (!img.recognizedText.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF0D141C))
+                        .border(0.5.dp, TerminalCyan.copy(alpha = 0.6f))
+                        .padding(8.dp)
+                ) {
+                    Text(
+                        text = "── RECOGNIZED HANDWRITING / TEXT ──",
+                        style = TerminalHeaderStyle.copy(color = TerminalCyan, fontSize = 10.sp)
                     )
-                )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = img.recognizedText,
+                        style = TerminalMonoStyle.copy(
+                            color = TerminalWhite,
+                            fontSize = 12.sp,
+                            lineHeight = 15.sp
+                        )
+                    )
+                }
+            }
+
+            if (img.asciiPreview != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF0A0A0A))
+                        .border(0.5.dp, TerminalBorder)
+                        .padding(6.dp)
+                ) {
+                    Text(
+                        text = img.asciiPreview,
+                        style = TerminalMonoStyle.copy(
+                            color = TerminalGreen.copy(alpha = 0.85f),
+                            fontSize = 8.sp,
+                            lineHeight = 9.sp
+                        )
+                    )
+                }
             }
         }
 
@@ -305,7 +333,10 @@ private fun ActiveAttachmentsPill(
             Text(
                 text = buildString {
                     append("BUFFERS: ")
-                    uiState.attachedImageBitmap?.let { append("[IMG ${it.width}x${it.height}] ") }
+                    uiState.attachedImageBitmap?.let {
+                        val ocrTag = if (!uiState.attachedImageText.isNullOrBlank()) " | OCR OK" else ""
+                        append("[IMG ${it.width}x${it.height}$ocrTag] ")
+                    }
                     uiState.attachedDoc?.let { append("[DOC: ${it.fileName} ~${it.tokenEstimate}tok] ") }
                 },
                 style = TerminalHeaderStyle.copy(color = TerminalGreen)

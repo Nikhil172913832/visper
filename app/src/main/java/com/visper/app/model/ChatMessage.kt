@@ -14,7 +14,8 @@ sealed class Attachment {
         val uri: Uri,
         val width: Int,
         val height: Int,
-        val asciiPreview: String? = null
+        val asciiPreview: String? = null,
+        val recognizedText: String? = null
     ) : Attachment()
 
     data class Document(
