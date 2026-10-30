@@ -15,7 +15,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.visper.app.ui.TerminalScreen
 import com.visper.app.ui.TerminalViewModel
-import com.visper.app.ui.theme.TerminalBlack
+import com.visper.app.ui.theme.AppBackground
 import com.visper.app.ui.theme.VisperTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -42,7 +42,7 @@ class MainActivity : ComponentActivity() {
             VisperTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = TerminalBlack
+                    color = AppBackground
                 ) {
                     TerminalScreen(
                         viewModel = viewModel
@@ -60,24 +60,22 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIncomingIntent(intent: android.content.Intent?) {
         if (intent == null) return
-        android.util.Log.i("MainActivity", "handleIncomingIntent extras: ${intent.extras}")
         val testImg = intent.getStringExtra("test_image_path")
         val testPrompt = intent.getStringExtra("test_prompt")
         lifecycleScope.launch {
             if (!testImg.isNullOrBlank()) {
                 val file = java.io.File(testImg)
-                android.util.Log.i("MainActivity", "test_image_path: $testImg (exists=${file.exists()})")
                 if (file.exists()) {
                     viewModel.onImageSelected(android.net.Uri.fromFile(file))
                     var waitCount = 0
-                    while (viewModel.uiState.value.attachedImageBitmap == null && waitCount < 30) {
+                    while (viewModel.uiState.value.attachedImageBitmap == null && waitCount < 50) {
                         delay(100)
                         waitCount++
                     }
+                    delay(200)
                 }
             }
             if (!testPrompt.isNullOrBlank()) {
-                android.util.Log.i("MainActivity", "test_prompt: $testPrompt")
                 viewModel.onInputTextChanged(testPrompt)
                 viewModel.submitPrompt()
             }

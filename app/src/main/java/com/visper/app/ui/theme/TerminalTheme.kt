@@ -9,49 +9,85 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-val TerminalBlack = Color(0xFF050505)
-val TerminalSurface = Color(0xFF0F0F0F)
-val TerminalBorder = Color(0xFF1F1F1F)
+// Modern Minimal Dark Theme
+val AppBackground = Color(0xFF09090B)
+val AppSurface = Color(0xFF141417)
+val AppSurfaceElevated = Color(0xFF1C1C21)
+val AppBorder = Color(0xFF27272A)
+val AppBorderLight = Color(0xFF3F3F46)
 
-val TerminalGreen = Color(0xFF00FF66)
-val TerminalAmber = Color(0xFFFFB000)
-val TerminalCyan = Color(0xFF00E5FF)
-val TerminalDim = Color(0xFF6E6E6E)
-val TerminalRed = Color(0xFFFF4444)
-val TerminalWhite = Color(0xFFEEEEEE)
+val AppPrimary = Color(0xFF3B82F6) // Modern Blue
+val AppAccent = Color(0xFF10B981)  // Emerald
+val AppAmber = Color(0xFFF59E0B)
+val AppRed = Color(0xFFEF4444)
 
-private val TerminalColorScheme = darkColorScheme(
-    primary = TerminalGreen,
-    onPrimary = TerminalBlack,
-    secondary = TerminalCyan,
-    onSecondary = TerminalBlack,
-    tertiary = TerminalAmber,
-    background = TerminalBlack,
-    onBackground = TerminalGreen,
-    surface = TerminalSurface,
-    onSurface = TerminalWhite
+val TextPrimary = Color(0xFFFAFAFA)
+val TextSecondary = Color(0xFFA1A1AA)
+val TextMuted = Color(0xFF71717A)
+
+// Backward compatibility aliases
+val TerminalBlack = AppBackground
+val TerminalSurface = AppSurface
+val TerminalBorder = AppBorder
+val TerminalGreen = AppAccent
+val TerminalAmber = AppAmber
+val TerminalCyan = AppPrimary
+val TerminalDim = TextMuted
+val TerminalRed = AppRed
+val TerminalWhite = TextPrimary
+
+private val AppColorScheme = darkColorScheme(
+    primary = AppPrimary,
+    onPrimary = Color.White,
+    secondary = AppAccent,
+    onSecondary = Color.White,
+    tertiary = AppAmber,
+    background = AppBackground,
+    onBackground = TextPrimary,
+    surface = AppSurface,
+    onSurface = TextPrimary
 )
 
-val TerminalMonoStyle = TextStyle(
+val AppBodyStyle = TextStyle(
+    fontFamily = FontFamily.Default,
+    fontWeight = FontWeight.Normal,
+    fontSize = 15.sp,
+    lineHeight = 22.sp,
+    color = TextPrimary
+)
+
+val AppCodeStyle = TextStyle(
     fontFamily = FontFamily.Monospace,
     fontWeight = FontWeight.Normal,
     fontSize = 13.sp,
     lineHeight = 18.sp,
-    color = TerminalGreen
+    color = Color(0xFF93C5FD)
 )
 
-val TerminalHeaderStyle = TextStyle(
-    fontFamily = FontFamily.Monospace,
-    fontWeight = FontWeight.Bold,
-    fontSize = 11.sp,
-    lineHeight = 14.sp,
-    color = TerminalDim
+val AppHeaderStyle = TextStyle(
+    fontFamily = FontFamily.Default,
+    fontWeight = FontWeight.SemiBold,
+    fontSize = 16.sp,
+    lineHeight = 22.sp,
+    color = TextPrimary
 )
+
+val AppCaptionStyle = TextStyle(
+    fontFamily = FontFamily.Default,
+    fontWeight = FontWeight.Normal,
+    fontSize = 12.sp,
+    lineHeight = 16.sp,
+    color = TextMuted
+)
+
+// Backward compatibility styles
+val TerminalMonoStyle = AppBodyStyle
+val TerminalHeaderStyle = AppCaptionStyle
 
 @Composable
 fun VisperTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = TerminalColorScheme,
+        colorScheme = AppColorScheme,
         content = content
     )
 }

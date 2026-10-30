@@ -34,7 +34,7 @@ class LlamaCppEngine(
         private const val SERVER_PORT = 8080
         private const val SERVER_HOST = "127.0.0.1"
         private const val DEFAULT_SYSTEM_PROMPT =
-            "You are Visper, an intelligent on-device multimodal assistant. Answer all user requests, transcribe handwritten notes and text, analyze images, and answer questions directly, accurately, and concisely."
+            "You are Visper, an intelligent on-device multimodal AI assistant. You have full vision capabilities and can directly perceive attached images. Describe images, answer questions, and assist the user clearly and concisely."
     }
 
     private var serverProcess: Process? = null
@@ -106,7 +106,8 @@ class LlamaCppEngine(
                 "--port", SERVER_PORT.toString(),
                 "-c", "2048",
                 "-t", "4",
-                "--image-max-tokens", "512"
+                "--image-max-tokens", "512",
+                "--reasoning", "off"
             )
 
             if (detectedMmproj != null && detectedMmproj.exists()) {
@@ -193,10 +194,10 @@ class LlamaCppEngine(
         val root = JSONObject()
         root.put("model", modelFile?.nameWithoutExtension ?: "qwen3.5-0.8b")
         root.put("stream", true)
-        root.put("max_tokens", 1024)
-        root.put("temperature", 0.7)
-        root.put("frequency_penalty", 0.5)
-        root.put("presence_penalty", 0.5)
+        root.put("max_tokens", 512)
+        root.put("temperature", 0.3)
+        root.put("frequency_penalty", 0.3)
+        root.put("presence_penalty", 0.3)
 
         val messages = JSONArray()
         val sysMsg = JSONObject().apply {
@@ -260,6 +261,37 @@ class LlamaCppEngine(
                 throw IllegalStateException("Engine inference error ($responseCode): $errorStream")
             }
 
+            val thinkingFilter = ThinkingFilter { cleanToken ->
+                tokenCount++
+
+                val trimmed = cleanToken.trim().lowercase()
+                if (trimmed.length > 2) {
+                    if (trimmed == lastToken) {
+                        consecutiveRepeatCount++
+                        if (consecutiveRepeatCount >= 4) {
+                            Log.w(TAG, "Repetition loop detected for token '$cleanToken'. Halting.")
+                            emit("\n[Visper: Loop halted]")
+                            return@ThinkingFilter
+                        }
+                    } else {
+                        lastToken = trimmed
+                        consecutiveRepeatCount = 0
+                    }
+                }
+
+                emit(cleanToken)
+
+                if (tokenCount % 3 == 0) {
+                    val elapsedSec = (System.currentTimeMillis() - startTime) / 1000f
+                    val tps = if (elapsedSec > 0) tokenCount / elapsedSec else 0f
+                    _metrics.value = _metrics.value.copy(
+                        memoryUsageMb = getMemoryMb(),
+                        tokensPerSecond = tps,
+                        contextTokensUsed = tokenCount
+                    )
+                }
+            }
+
             conn.inputStream.bufferedReader().useLines { lines ->
                 for (line in lines) {
                     val trimmedLine = line.trim()
@@ -279,36 +311,8 @@ class LlamaCppEngine(
                                 val content = if (delta.isNull("content")) "" else delta.optString("content", "")
                                 val reasoning = if (delta.isNull("reasoning_content")) "" else delta.optString("reasoning_content", "")
                                 val token = if (content.isNotEmpty()) content else reasoning
-
                                 if (token.isNotEmpty()) {
-                                    tokenCount++
-
-                                    val trimmed = token.trim().lowercase()
-                                    if (trimmed.length > 2) {
-                                        if (trimmed == lastToken) {
-                                            consecutiveRepeatCount++
-                                            if (consecutiveRepeatCount >= 4) {
-                                                Log.w(TAG, "Repetition loop detected for token '$token'. Halting.")
-                                                emit("\n[Visper: Loop halted]")
-                                                break
-                                            }
-                                        } else {
-                                            lastToken = trimmed
-                                            consecutiveRepeatCount = 0
-                                        }
-                                    }
-
-                                    emit(token)
-
-                                    if (tokenCount % 3 == 0) {
-                                        val elapsedSec = (System.currentTimeMillis() - startTime) / 1000f
-                                        val tps = if (elapsedSec > 0) tokenCount / elapsedSec else 0f
-                                        _metrics.value = _metrics.value.copy(
-                                            memoryUsageMb = getMemoryMb(),
-                                            tokensPerSecond = tps,
-                                            contextTokensUsed = tokenCount
-                                        )
-                                    }
+                                    thinkingFilter.feed(token)
                                 }
                             }
                         }
@@ -317,6 +321,8 @@ class LlamaCppEngine(
                     }
                 }
             }
+
+            thinkingFilter.flush()
 
             val elapsedSec = (System.currentTimeMillis() - startTime) / 1000f
             val finalTps = if (elapsedSec > 0) tokenCount / elapsedSec else 0f
@@ -330,9 +336,13 @@ class LlamaCppEngine(
             Log.i(TAG, "Generation cancelled: ${e.message}")
             conn.disconnect()
             _state.value = EngineState.READY
+        } catch (e: java.net.SocketException) {
+            Log.i(TAG, "Socket closed / generation halted: ${e.message}")
+            conn.disconnect()
+            _state.value = EngineState.READY
         } catch (e: Exception) {
             Log.e(TAG, "Generation error in LlamaCppEngine", e)
-            _state.value = EngineState.ERROR
+            _state.value = if (isServerHealthy()) EngineState.READY else EngineState.ERROR
             throw e
         } finally {
             activeHttpConnection = null
@@ -424,5 +434,66 @@ class LlamaCppEngine(
 
     private fun getMemoryMb(): Long {
         return Debug.getNativeHeapAllocatedSize() / (1024 * 1024)
+    }
+}
+
+private class ThinkingFilter(private val onEmit: suspend (String) -> Unit) {
+    private var isInsideThinking = false
+    private val buffer = StringBuilder()
+
+    suspend fun feed(chunk: String) {
+        buffer.append(chunk)
+        processBuffer()
+    }
+
+    private suspend fun processBuffer() {
+        while (buffer.isNotEmpty()) {
+            if (isInsideThinking) {
+                val endIdx = buffer.indexOf("</think>")
+                if (endIdx != -1) {
+                    isInsideThinking = false
+                    buffer.delete(0, endIdx + "</think>".length)
+                } else {
+                    if (buffer.length > "</think>".length) {
+                        buffer.delete(0, buffer.length - "</think>".length)
+                    }
+                    break
+                }
+            } else {
+                val startIdx = buffer.indexOf("<think>")
+                if (startIdx != -1) {
+                    if (startIdx > 0) {
+                        val before = buffer.substring(0, startIdx)
+                        onEmit(before)
+                    }
+                    isInsideThinking = true
+                    buffer.delete(0, startIdx + "<think>".length)
+                } else {
+                    val possiblePrefixes = listOf("<", "<t", "<th", "<thi", "<thin", "<think")
+                    val matchingPrefix = possiblePrefixes.lastOrNull { buffer.endsWith(it) }
+                    if (matchingPrefix != null) {
+                        val safeLen = buffer.length - matchingPrefix.length
+                        if (safeLen > 0) {
+                            val safe = buffer.substring(0, safeLen)
+                            onEmit(safe)
+                            buffer.delete(0, safeLen)
+                        }
+                        break
+                    } else {
+                        val all = buffer.toString()
+                        buffer.clear()
+                        onEmit(all)
+                    }
+                }
+            }
+        }
+    }
+
+    suspend fun flush() {
+        if (!isInsideThinking && buffer.isNotEmpty()) {
+            val remaining = buffer.toString()
+            buffer.clear()
+            onEmit(remaining)
+        }
     }
 }

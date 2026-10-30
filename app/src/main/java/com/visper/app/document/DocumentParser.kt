@@ -48,14 +48,8 @@ object DocumentParser {
             val fileName = queryFileName(context, uri) ?: "document.txt"
             val mimeType = context.contentResolver.getType(uri) ?: "text/plain"
 
-            var visualAscii: String? = null
             val rawText = if (mimeType.contains("pdf", ignoreCase = true) || fileName.endsWith(".pdf", ignoreCase = true)) {
-                val extracted = extractPdfText(context, uri, maxChars)
-                // If text is minimal or PDF is image-based, render page 1 via native PdfRenderer
-                if (extracted.length < 80) {
-                    visualAscii = renderFirstPageAscii(context, uri)
-                }
-                extracted
+                extractPdfText(context, uri, maxChars)
             } else {
                 extractPlainText(context, uri, maxChars)
             }
@@ -76,7 +70,7 @@ object DocumentParser {
                     textContent = cleanText,
                     tokenEstimate = estimatedTokens,
                     isTruncated = isTruncated,
-                    visualAsciiPage = visualAscii
+                    visualAsciiPage = null
                 )
             )
         } catch (e: Exception) {
@@ -261,29 +255,7 @@ object DocumentParser {
         return -1
     }
 
-    /**
-     * Renders Page 1 of the PDF to an ASCII tensor preview via native Android PdfRenderer
-     */
-    private fun renderFirstPageAscii(context: Context, uri: Uri): String? {
-        return try {
-            val pfd: ParcelFileDescriptor = context.contentResolver.openFileDescriptor(uri, "r") ?: return null
-            pfd.use { descriptor ->
-                PdfRenderer(descriptor).use { renderer ->
-                    if (renderer.pageCount == 0) return null
-                    renderer.openPage(0).use { page ->
-                        val width = 300
-                        val height = (300f * page.height / page.width).toInt()
-                        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                        page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                        ImageProcessor.toAsciiArt(bitmap, targetCols = 38)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "PdfRenderer preview skipped: ${e.message}")
-            null
-        }
-    }
+
 
     private fun queryFileName(context: Context, uri: Uri): String? {
         var name: String? = null

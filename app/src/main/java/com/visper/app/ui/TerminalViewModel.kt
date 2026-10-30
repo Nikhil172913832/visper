@@ -28,8 +28,6 @@ data class TerminalUiState(
     val inputText: String = "",
     val attachedImageUri: Uri? = null,
     val attachedImageBitmap: Bitmap? = null,
-    val attachedImageAscii: String? = null,
-    val attachedImageText: String? = null,
     val attachedDoc: ParsedDocument? = null,
     val isRecordingAudio: Boolean = false,
     val audioWaveformVisual: String = "",
@@ -49,13 +47,8 @@ class TerminalViewModel(
         TerminalUiState(
             messages = listOf(
                 ChatMessage(
-                    sender = MessageSender.SYSTEM,
-                    text = """
-                    VISPER ON-DEVICE AI TERMINAL [v1.0.0]
-                    Kernel: Linux aarch64 | Hardware Accel: Vulkan / NPU
-                    Modality: Text | Vision | Audio | Document
-                    Type '/help' for commands. Tap [DOC], [IMG], or [MIC] below.
-                    """.trimIndent()
+                    sender = MessageSender.AI,
+                    text = "Hello! I am Visper, your on-device AI assistant. How can I help you today?"
                 )
             )
         )
@@ -63,7 +56,6 @@ class TerminalViewModel(
     val uiState: StateFlow<TerminalUiState> = _uiState.asStateFlow()
 
     init {
-        // Collect engine metrics & state
         viewModelScope.launch {
             engine.metrics.collect { metrics ->
                 _uiState.value = _uiState.value.copy(metrics = metrics)
@@ -74,7 +66,6 @@ class TerminalViewModel(
                 _uiState.value = _uiState.value.copy(engineState = state)
             }
         }
-        // Collect audio recording state
         viewModelScope.launch {
             audioManager.recordingState.collect { audioState ->
                 when (audioState) {
@@ -119,7 +110,7 @@ class TerminalViewModel(
             }
         }
 
-        // Check for model weights on device storage and auto-bind on launch
+        // Quietly detect and auto-initialize model in background
         viewModelScope.launch {
             val appModelsDir = getApplication<Application>().getExternalFilesDir("models")
             val candidatePaths = listOf(
@@ -133,30 +124,7 @@ class TerminalViewModel(
             )
             val detected = candidatePaths.firstOrNull { java.io.File(it).exists() }
             if (detected != null) {
-                val f = java.io.File(detected)
-                val isGguf = f.name.endsWith(".gguf", ignoreCase = true)
-                appendMessage(
-                    ChatMessage(
-                        sender = MessageSender.SYSTEM,
-                        text = "[STORAGE] Model detected: '${f.name}' (${f.length() / (1024 * 1024)} MB).\nInitializing Native Multimodal Neural Engine..."
-                    )
-                )
-                val res = engine.initialize(detected, useGpu = false)
-                if (res.isSuccess) {
-                    appendMessage(
-                        ChatMessage(
-                            sender = MessageSender.SYSTEM,
-                            text = "[READY] Neural model active (${if (isGguf) "Qwen Multimodal NEON" else "CPU"}). Real neural inference ready!"
-                        )
-                    )
-                } else {
-                    appendMessage(
-                        ChatMessage(
-                            sender = MessageSender.ERROR,
-                            text = "[INIT FAILED] ${res.exceptionOrNull()?.message}"
-                        )
-                    )
-                }
+                engine.initialize(detected, useGpu = false)
             }
         }
     }
@@ -175,45 +143,13 @@ class TerminalViewModel(
 
     fun onImageSelected(uri: Uri) {
         viewModelScope.launch {
-            appendMessage(
-                ChatMessage(
-                    sender = MessageSender.SYSTEM,
-                    text = "[IMG ATTACHING] Decoding image for Native Multimodal Vision..."
+            val bitmap = ImageProcessor.decodeSampledBitmapFromUri(getApplication(), uri, 1280, 1280)
+            if (bitmap != null) {
+                _uiState.value = _uiState.value.copy(
+                    attachedImageUri = uri,
+                    attachedImageBitmap = bitmap
                 )
-            )
-            val bitmap = ImageProcessor.decodeSampledBitmapFromUri(getApplication(), uri, 640, 640)
-            if (bitmap == null) {
-                appendMessage(
-                    ChatMessage(
-                        sender = MessageSender.ERROR,
-                        text = "[ERROR] Could not decode image."
-                    )
-                )
-                return@launch
             }
-
-            val ascii = ImageProcessor.toAsciiArt(bitmap, targetCols = 38)
-
-            _uiState.value = _uiState.value.copy(
-                attachedImageUri = uri,
-                attachedImageBitmap = bitmap,
-                attachedImageAscii = ascii,
-                attachedImageText = null
-            )
-
-            appendMessage(
-                ChatMessage(
-                    sender = MessageSender.SYSTEM,
-                    text = "[IMG ATTACHED] ${bitmap.width}x${bitmap.height} px ready for Native Multimodal Vision.",
-                    attachment = Attachment.Image(
-                        uri = uri,
-                        width = bitmap.width,
-                        height = bitmap.height,
-                        asciiPreview = ascii,
-                        recognizedText = null
-                    )
-                )
-            )
         }
     }
 
@@ -222,25 +158,6 @@ class TerminalViewModel(
             val result = DocumentParser.parseDocument(getApplication(), uri)
             result.onSuccess { doc ->
                 _uiState.value = _uiState.value.copy(attachedDoc = doc)
-                appendMessage(
-                    ChatMessage(
-                        sender = MessageSender.SYSTEM,
-                        text = "[DOC ATTACHED] '${doc.fileName}' (~${doc.tokenEstimate} tokens)${if (doc.isTruncated) " [Budget Truncated]" else ""}",
-                        attachment = Attachment.Document(
-                            uri = uri,
-                            fileName = doc.fileName,
-                            tokenEstimate = doc.tokenEstimate,
-                            snippet = doc.textContent.take(160)
-                        )
-                    )
-                )
-            }.onFailure { err ->
-                appendMessage(
-                    ChatMessage(
-                        sender = MessageSender.ERROR,
-                        text = "Failed to load document: ${err.message}"
-                    )
-                )
             }
         }
     }
@@ -249,10 +166,23 @@ class TerminalViewModel(
         _uiState.value = _uiState.value.copy(
             attachedImageUri = null,
             attachedImageBitmap = null,
-            attachedImageAscii = null,
-            attachedImageText = null,
             attachedDoc = null
         )
+    }
+
+    fun clearConversation() {
+        cancelGeneration()
+        engine.resetContext()
+        _uiState.value = _uiState.value.copy(
+            messages = listOf(
+                ChatMessage(
+                    sender = MessageSender.AI,
+                    text = "Conversation cleared. How can I assist you now?"
+                )
+            ),
+            inputText = ""
+        )
+        clearAttachments()
     }
 
     fun cancelGeneration() {
@@ -275,90 +205,21 @@ class TerminalViewModel(
         val prompt = _uiState.value.inputText.trim()
         val currentImage = _uiState.value.attachedImageBitmap
         val currentImageUri = _uiState.value.attachedImageUri
-        val currentImageAscii = _uiState.value.attachedImageAscii
-        val currentImageText = _uiState.value.attachedImageText
         val currentDoc = _uiState.value.attachedDoc
 
         if (prompt.isBlank() && currentImage == null && currentDoc == null) {
             return
         }
 
-        // Handle terminal commands
         if (prompt.equals("/clear", ignoreCase = true)) {
-            engine.resetContext()
-            _uiState.value = _uiState.value.copy(
-                messages = emptyList(),
-                inputText = ""
-            )
-            clearAttachments()
-            return
-        }
-
-        if (prompt.startsWith("/model", ignoreCase = true)) {
-            val appModelsDir = getApplication<Application>().getExternalFilesDir("models")
-            val targetPath = prompt.removePrefix("/model").trim().ifEmpty {
-                val candidatePaths = listOf(
-                    java.io.File(appModelsDir, "Qwen3.5-0.8B-Q4_K_M.gguf").absolutePath,
-                    java.io.File(appModelsDir, "qwen3.5-0.8b-q4_k_m.gguf").absolutePath,
-                    java.io.File(appModelsDir, "qwen2.5-0.5b-instruct-q4_k_m.gguf").absolutePath,
-                    "/sdcard/Android/data/com.visper.app/files/models/Qwen3.5-0.8B-Q4_K_M.gguf",
-                    "/sdcard/Download/Qwen3.5-0.8B-Q4_K_M.gguf",
-                    java.io.File(appModelsDir, "gemma-2b-it-cpu-int4.bin").absolutePath
-                )
-                candidatePaths.firstOrNull { java.io.File(it).exists() } ?: ""
-            }
-            if (targetPath.isEmpty()) {
-                appendMessage(
-                    ChatMessage(
-                        sender = MessageSender.ERROR,
-                        text = "Usage: /model <path_to_gguf_or_bin>"
-                    )
-                )
-            } else {
-                viewModelScope.launch {
-                    val f = java.io.File(targetPath)
-                    val isGguf = f.name.endsWith(".gguf", ignoreCase = true)
-                    appendMessage(
-                        ChatMessage(
-                            sender = MessageSender.SYSTEM,
-                            text = "Binding '${f.name}' via ${if (isGguf) "Qwen Multimodal Engine" else "MediaPipe"}..."
-                        )
-                    )
-                    try {
-                        val res = engine.initialize(targetPath, useGpu = false)
-                        if (res.isSuccess) {
-                            appendMessage(
-                                ChatMessage(
-                                    sender = MessageSender.SYSTEM,
-                                    text = "[SUCCESS] Model '${f.name}' bound into memory! Real token generation ready."
-                                )
-                            )
-                        } else {
-                            appendMessage(
-                                ChatMessage(
-                                    sender = MessageSender.ERROR,
-                                    text = "[ERROR] Engine failed to load: ${res.exceptionOrNull()?.message}"
-                                )
-                            )
-                        }
-                    } catch (t: Throwable) {
-                        appendMessage(
-                            ChatMessage(
-                                sender = MessageSender.ERROR,
-                                text = "Engine load error: ${t.message}"
-                            )
-                        )
-                    }
-                }
-            }
-            _uiState.value = _uiState.value.copy(inputText = "")
+            clearConversation()
             return
         }
 
         val displayPrompt = prompt.ifBlank {
             when {
-                currentImage != null -> "Describe this image in detail and transcribe any visible handwriting or text."
-                currentDoc != null -> "[Analyze Document]"
+                currentImage != null -> "Describe this image in detail."
+                currentDoc != null -> "Summarize this document."
                 else -> ""
             }
         }
@@ -371,9 +232,7 @@ class TerminalViewModel(
                 currentImage != null && currentImageUri != null -> Attachment.Image(
                     uri = currentImageUri,
                     width = currentImage.width,
-                    height = currentImage.height,
-                    asciiPreview = currentImageAscii,
-                    recognizedText = currentImageText
+                    height = currentImage.height
                 )
                 currentDoc != null -> Attachment.Document(
                     uri = currentDoc.fileName.let { Uri.parse("file://$it") },
@@ -391,8 +250,6 @@ class TerminalViewModel(
             inputText = "",
             attachedImageUri = null,
             attachedImageBitmap = null,
-            attachedImageAscii = null,
-            attachedImageText = null,
             attachedDoc = null
         )
 
@@ -426,7 +283,7 @@ class TerminalViewModel(
                     android.util.Log.e("TerminalViewModel", "Generation error", e)
                     updateStreamingMessage(
                         responseId,
-                        "visper: error: ${e.message ?: e.javaClass.simpleName}",
+                        "Error: ${e.message ?: e.javaClass.simpleName}",
                         isDone = true
                     )
                 }
