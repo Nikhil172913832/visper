@@ -69,7 +69,7 @@ android {
         jniLibs {
             // Enforce legacy packaging to extract .so files into nativeLibraryDir for dlopen
             useLegacyPackaging = true
-            pickFirsts += listOf("**/libc++_shared.so", "**/libomp.so")
+            pickFirsts += listOf("**/libc++_shared.so", "**/libomp.so", "**/libllama*.so", "**/libggml*.so")
         }
     }
 }

@@ -4,6 +4,9 @@
 
     <uses-sdk tools:overrideLibrary="com.arm.aichat" />
 
+    <!-- Loopback localhost networking for on-device native llama engine daemon -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- Audio recording for on-device voice STT -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
@@ -25,6 +28,7 @@
     <application
         android:name=".VisperApp"
         android:extractNativeLibs="true"
+        android:usesCleartextTraffic="true"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="false"

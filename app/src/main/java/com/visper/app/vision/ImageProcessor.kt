@@ -314,4 +314,31 @@ object ImageProcessor {
         }
         return buffer
     }
+
+    /**
+     * Resizes bitmap down to max dimension [maxDim] and encodes to JPEG Base64
+     * for native multimodal vision inference.
+     */
+    fun bitmapToBase64Jpeg(bitmap: Bitmap, maxDim: Int = 640, quality: Int = 85): String {
+        val width = bitmap.width
+        val height = bitmap.height
+        val maxOriginal = maxOf(width, height)
+        val scaled = if (maxOriginal > maxDim) {
+            val scale = maxDim.toFloat() / maxOriginal
+            Bitmap.createScaledBitmap(
+                bitmap,
+                (width * scale).roundToInt().coerceAtLeast(1),
+                (height * scale).roundToInt().coerceAtLeast(1),
+                true
+            )
+        } else {
+            bitmap
+        }
+        val output = java.io.ByteArrayOutputStream()
+        scaled.compress(Bitmap.CompressFormat.JPEG, quality, output)
+        if (scaled != bitmap) {
+            scaled.recycle()
+        }
+        return android.util.Base64.encodeToString(output.toByteArray(), android.util.Base64.NO_WRAP)
+    }
 }

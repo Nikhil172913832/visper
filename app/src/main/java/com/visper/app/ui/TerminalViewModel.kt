@@ -123,10 +123,13 @@ class TerminalViewModel(
         viewModelScope.launch {
             val appModelsDir = getApplication<Application>().getExternalFilesDir("models")
             val candidatePaths = listOf(
+                java.io.File(appModelsDir, "Qwen3.5-0.8B-Q4_K_M.gguf").absolutePath,
+                java.io.File(appModelsDir, "qwen3.5-0.8b-q4_k_m.gguf").absolutePath,
                 java.io.File(appModelsDir, "qwen2.5-0.5b-instruct-q4_k_m.gguf").absolutePath,
-                java.io.File(appModelsDir, "gemma-2b-it-cpu-int4.bin").absolutePath,
+                "/sdcard/Android/data/com.visper.app/files/models/Qwen3.5-0.8B-Q4_K_M.gguf",
+                "/sdcard/Download/Qwen3.5-0.8B-Q4_K_M.gguf",
                 "/sdcard/Download/qwen2.5-0.5b-instruct-q4_k_m.gguf",
-                java.io.File(appModelsDir, "gemma-2b-it-gpu-int4.bin").absolutePath
+                java.io.File(appModelsDir, "gemma-2b-it-cpu-int4.bin").absolutePath
             )
             val detected = candidatePaths.firstOrNull { java.io.File(it).exists() }
             if (detected != null) {
@@ -135,7 +138,7 @@ class TerminalViewModel(
                 appendMessage(
                     ChatMessage(
                         sender = MessageSender.SYSTEM,
-                        text = "[STORAGE] Model detected: '${f.name}' (${f.length() / (1024 * 1024)} MB).\nInitializing on-device neural engine..."
+                        text = "[STORAGE] Model detected: '${f.name}' (${f.length() / (1024 * 1024)} MB).\nInitializing Native Multimodal Neural Engine..."
                     )
                 )
                 val res = engine.initialize(detected, useGpu = false)
@@ -143,7 +146,7 @@ class TerminalViewModel(
                     appendMessage(
                         ChatMessage(
                             sender = MessageSender.SYSTEM,
-                            text = "[READY] Neural model active (${if (isGguf) "llama.cpp ARM NEON" else "CPU"}). Real neural inference ready!"
+                            text = "[READY] Neural model active (${if (isGguf) "Qwen Multimodal NEON" else "CPU"}). Real neural inference ready!"
                         )
                     )
                 } else {
@@ -175,10 +178,10 @@ class TerminalViewModel(
             appendMessage(
                 ChatMessage(
                     sender = MessageSender.SYSTEM,
-                    text = "[IMG ATTACHING] Decoding image & analyzing handwriting / text..."
+                    text = "[IMG ATTACHING] Decoding image for Native Multimodal Vision..."
                 )
             )
-            val bitmap = ImageProcessor.decodeSampledBitmapFromUri(getApplication(), uri, 1600, 1600)
+            val bitmap = ImageProcessor.decodeSampledBitmapFromUri(getApplication(), uri, 640, 640)
             if (bitmap == null) {
                 appendMessage(
                     ChatMessage(
@@ -190,34 +193,24 @@ class TerminalViewModel(
             }
 
             val ascii = ImageProcessor.toAsciiArt(bitmap, targetCols = 38)
-            val ocrResult = ImageProcessor.extractTextFromBitmap(bitmap)
-            val extractedText = ocrResult.getOrNull()?.trim() ?: ""
 
             _uiState.value = _uiState.value.copy(
                 attachedImageUri = uri,
                 attachedImageBitmap = bitmap,
                 attachedImageAscii = ascii,
-                attachedImageText = extractedText.ifEmpty { null }
+                attachedImageText = null
             )
-
-            val statusText = if (extractedText.isNotEmpty()) {
-                val charCount = extractedText.length
-                val lineCount = extractedText.lines().count()
-                "[IMG ATTACHED] ${bitmap.width}x${bitmap.height} px -> Handwriting/Text recognized ($charCount chars, $lineCount lines)."
-            } else {
-                "[IMG ATTACHED] ${bitmap.width}x${bitmap.height} px -> ASCII vision tensor generated (no text detected)."
-            }
 
             appendMessage(
                 ChatMessage(
                     sender = MessageSender.SYSTEM,
-                    text = statusText,
+                    text = "[IMG ATTACHED] ${bitmap.width}x${bitmap.height} px ready for Native Multimodal Vision.",
                     attachment = Attachment.Image(
                         uri = uri,
                         width = bitmap.width,
                         height = bitmap.height,
                         asciiPreview = ascii,
-                        recognizedText = extractedText.ifEmpty { null }
+                        recognizedText = null
                     )
                 )
             )
@@ -305,10 +298,12 @@ class TerminalViewModel(
             val appModelsDir = getApplication<Application>().getExternalFilesDir("models")
             val targetPath = prompt.removePrefix("/model").trim().ifEmpty {
                 val candidatePaths = listOf(
+                    java.io.File(appModelsDir, "Qwen3.5-0.8B-Q4_K_M.gguf").absolutePath,
+                    java.io.File(appModelsDir, "qwen3.5-0.8b-q4_k_m.gguf").absolutePath,
                     java.io.File(appModelsDir, "qwen2.5-0.5b-instruct-q4_k_m.gguf").absolutePath,
-                    java.io.File(appModelsDir, "gemma-2b-it-cpu-int4.bin").absolutePath,
-                    "/sdcard/Download/qwen2.5-0.5b-instruct-q4_k_m.gguf",
-                    java.io.File(appModelsDir, "gemma-2b-it-gpu-int4.bin").absolutePath
+                    "/sdcard/Android/data/com.visper.app/files/models/Qwen3.5-0.8B-Q4_K_M.gguf",
+                    "/sdcard/Download/Qwen3.5-0.8B-Q4_K_M.gguf",
+                    java.io.File(appModelsDir, "gemma-2b-it-cpu-int4.bin").absolutePath
                 )
                 candidatePaths.firstOrNull { java.io.File(it).exists() } ?: ""
             }
@@ -326,7 +321,7 @@ class TerminalViewModel(
                     appendMessage(
                         ChatMessage(
                             sender = MessageSender.SYSTEM,
-                            text = "Binding '${f.name}' via ${if (isGguf) "llama.cpp NEON engine" else "MediaPipe"}..."
+                            text = "Binding '${f.name}' via ${if (isGguf) "Qwen Multimodal Engine" else "MediaPipe"}..."
                         )
                     )
                     try {
@@ -362,13 +357,7 @@ class TerminalViewModel(
 
         val displayPrompt = prompt.ifBlank {
             when {
-                currentImage != null -> {
-                    if (!currentImageText.isNullOrBlank()) {
-                        "Transcribe and format the handwritten / printed text in this image."
-                    } else {
-                        "[Analyze Image]"
-                    }
-                }
+                currentImage != null -> "Describe this image in detail and transcribe any visible handwriting or text."
                 currentDoc != null -> "[Analyze Document]"
                 else -> ""
             }
@@ -422,13 +411,9 @@ class TerminalViewModel(
 
             val contextPrefix = buildString {
                 if (currentDoc != null) {
+                    append("Document text:\n\"\"\"\n")
                     append(currentDoc.textContent)
-                }
-                if (!currentImageText.isNullOrBlank()) {
-                    if (isNotEmpty()) append("\n\n")
-                    append("Text/Handwriting recognized from attached image:\n\"\"\"\n")
-                    append(currentImageText.trim())
-                    append("\n\"\"\"")
+                    append("\n\"\"\"\n\n")
                 }
             }
 
@@ -438,9 +423,10 @@ class TerminalViewModel(
 
             engine.generateStream(displayPrompt, contextPrefix, currentImage)
                 .catch { e ->
+                    android.util.Log.e("TerminalViewModel", "Generation error", e)
                     updateStreamingMessage(
                         responseId,
-                        "visper: error: ${e.message}",
+                        "visper: error: ${e.message ?: e.javaClass.simpleName}",
                         isDone = true
                     )
                 }
