@@ -64,12 +64,14 @@ class AudioTranscriptionManager(private val context: Context) {
                         SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
                         SpeechRecognizer.ERROR_CLIENT -> "Client side error"
                         SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Record audio permission denied"
-                        SpeechRecognizer.ERROR_NETWORK -> "Offline speech pack required"
+                        SpeechRecognizer.ERROR_NETWORK -> "Network required or speech pack unavailable"
                         SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
                         SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized"
                         SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy"
                         SpeechRecognizer.ERROR_SERVER -> "Server error"
                         SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected"
+                        12 -> "Language not supported by device speech engine"
+                        13 -> "Language pack not downloaded for offline speech"
                         else -> "Recognition error ($error)"
                     }
                     _recordingState.value = AudioRecordingState.Error(errorMsg)
@@ -97,18 +99,31 @@ class AudioTranscriptionManager(private val context: Context) {
             "hi" -> "hi-IN"
             "pa" -> "pa-IN"
             "en" -> "en-IN"
-            else -> Locale.getDefault().toLanguageTag()
+            else -> {
+                // For Auto mode: check if Indian region or Hindi/Punjabi locale
+                val defaultLoc = Locale.getDefault()
+                val tz = java.util.TimeZone.getDefault().id
+                if (defaultLoc.country.equals("IN", ignoreCase = true) ||
+                    tz.contains("Calcutta", ignoreCase = true) ||
+                    tz.contains("Kolkata", ignoreCase = true) ||
+                    defaultLoc.language.equals("hi", ignoreCase = true) ||
+                    defaultLoc.language.equals("pa", ignoreCase = true)) {
+                    "hi-IN"
+                } else {
+                    defaultLoc.toLanguageTag()
+                }
+            }
         }
 
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, targetLangTag)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, targetLangTag)
+            putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, false)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            // Extra languages hint for modern recognition engines
-            putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("hi-IN", "pa-IN", "en-IN", "en-US"))
-            // Request on-device offline recognition for zero network / privacy
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+            // Extra languages hint for modern multilingual recognition engines
+            putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("hi-IN", "en-IN", "pa-IN", "en-GB", "en-US"))
         }
 
         try {

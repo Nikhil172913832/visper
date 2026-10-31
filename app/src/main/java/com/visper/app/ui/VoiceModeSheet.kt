@@ -167,10 +167,10 @@ fun VoiceModeSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 val languages = listOf(
-                    "auto" to "Auto",
-                    "en" to "English",
+                    "auto" to "Auto (हिं/En)",
                     "hi" to "हिंदी",
-                    "pa" to "ਪੰਜਾਬੀ"
+                    "pa" to "ਪੰਜਾਬੀ",
+                    "en" to "English"
                 )
                 languages.forEach { (code, label) ->
                     val isSelected = selectedLanguage.equals(code, ignoreCase = true)

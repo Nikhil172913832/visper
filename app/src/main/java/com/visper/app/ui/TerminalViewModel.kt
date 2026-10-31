@@ -1,6 +1,7 @@
 package com.visper.app.ui
 
 import android.app.Application
+import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
@@ -82,6 +83,7 @@ class TerminalViewModel(
     application: Application
 ) : AndroidViewModel(application) {
 
+    private val prefs = application.getSharedPreferences("visper_prefs", Context.MODE_PRIVATE)
     private val engine: InferenceEngine = VisperEngine(application)
     private val audioManager = AudioTranscriptionManager(application)
     private val sessionManager = ChatSessionManager(application)
@@ -97,6 +99,10 @@ class TerminalViewModel(
     val uiState: StateFlow<TerminalUiState> = _uiState.asStateFlow()
 
     init {
+        val savedVoiceLang = prefs.getString("voice_language", "auto") ?: "auto"
+        audioManager.preferredLanguage = savedVoiceLang
+        ttsManager.preferredLanguage = savedVoiceLang
+
         // Initialize sessions and memory vault
         val existingSessions = sessionManager.getSessionList()
         val initialSession = if (existingSessions.isNotEmpty()) {
@@ -119,7 +125,8 @@ class TerminalViewModel(
             memories = memoryStore.getMemories(),
             isModelInstalled = installed,
             showDownloadCard = !installed,
-            installedModelSizeMb = (installedFile?.length() ?: 0L) / (1024 * 1024)
+            installedModelSizeMb = (installedFile?.length() ?: 0L) / (1024 * 1024),
+            voiceLanguage = savedVoiceLang
         )
 
         viewModelScope.launch {
@@ -257,6 +264,7 @@ class TerminalViewModel(
     }
 
     fun setVoiceLanguage(language: String) {
+        prefs.edit().putString("voice_language", language).apply()
         _uiState.value = _uiState.value.copy(voiceLanguage = language)
         ttsManager.preferredLanguage = language
         audioManager.preferredLanguage = language
