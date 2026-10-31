@@ -34,7 +34,7 @@ class LlamaCppEngine(
         private const val SERVER_PORT = 8080
         private const val SERVER_HOST = "127.0.0.1"
         private const val DEFAULT_SYSTEM_PROMPT =
-            "You are Visper, an intelligent on-device multimodal AI assistant. You have full vision capabilities and can directly perceive attached images. Describe images, answer questions, and assist the user clearly and concisely."
+            "You are Visper, an intelligent on-device multimodal AI assistant. Describe images, answer questions, and assist the user clearly and concisely. Your name is Visper. You are the AI assistant speaking to the human user."
     }
 
     private var serverProcess: Process? = null

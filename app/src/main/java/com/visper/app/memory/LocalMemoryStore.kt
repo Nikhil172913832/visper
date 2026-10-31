@@ -86,11 +86,22 @@ class LocalMemoryStore(private val context: Context) {
         val memories = getMemories()
         if (memories.isEmpty()) return ""
         return buildString {
-            append("\n[User Personal Profile & Stored Facts]:\n")
+            append("\n[Profile of the Human User]:\n")
             for (m in memories.take(8)) {
-                append("- ").append(m.fact).append("\n")
+                val cleanFact = when {
+                    m.fact.startsWith("The user's name is ", ignoreCase = true) -> "Name: " + m.fact.substring(19)
+                    m.fact.startsWith("The user is a ", ignoreCase = true) -> "Role: " + m.fact.substring(14)
+                    m.fact.startsWith("The user is ", ignoreCase = true) -> "Role: " + m.fact.substring(12)
+                    m.fact.startsWith("The user studies ", ignoreCase = true) -> "Studies: " + m.fact.substring(17)
+                    m.fact.startsWith("The user prefers ", ignoreCase = true) -> "Preference: " + m.fact.substring(17)
+                    else -> m.fact
+                }
+                append("- ").append(cleanFact).append("\n")
             }
-            append("When the user asks about their identity, name, or preferences, use these stored facts directly to address the user (e.g., 'Your name is ...').\n")
+            append("\nRULES:\n")
+            append("1. Your name is Visper. You are the AI assistant. Never call yourself by the user's name or claim the user's attributes.\n")
+            append("2. When answering questions about the user (e.g. \"Who am I?\", \"What is my name?\", \"What do I do?\"), address the user using \"You\" based on the profile above (e.g. \"Your name is ...\").\n")
+            append("3. For greetings, introduce yourself only as Visper.\n")
         }
     }
 
@@ -118,10 +129,10 @@ class LocalMemoryStore(private val context: Context) {
                 if (candidate.length in 2..120) {
                     return when (trigger.trim()) {
                         "remember that", "remember:", "remember" -> candidate
-                        "my name is" -> "The user's name is ${candidate.takeWhile { it != '.' && it != ',' }}"
-                        "i am a" -> "The user is a $candidate"
-                        "i study", "i am studying" -> "The user studies $candidate"
-                        "i prefer" -> "The user prefers $candidate"
+                        "my name is" -> "Name: ${candidate.takeWhile { it != '.' && it != ',' }}"
+                        "i am a" -> "Role: $candidate"
+                        "i study", "i am studying" -> "Studies: $candidate"
+                        "i prefer" -> "Preference: $candidate"
                         "always reply in", "always respond in" -> "Prefer responses in $candidate"
                         else -> candidate
                     }
