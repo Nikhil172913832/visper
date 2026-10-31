@@ -140,6 +140,10 @@ class VisperEngine(
         activeEngine = null
     }
 
+    override fun getHardwareStats(): Pair<Long, Long> {
+        return activeEngine?.getHardwareStats() ?: Pair(0L, 0L)
+    }
+
     private fun getMemoryMb(): Long {
         return Debug.getNativeHeapAllocatedSize() / (1024 * 1024)
     }

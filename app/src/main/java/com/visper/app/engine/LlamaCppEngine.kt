@@ -433,7 +433,72 @@ class LlamaCppEngine(
     }
 
     private fun getMemoryMb(): Long {
-        return Debug.getNativeHeapAllocatedSize() / (1024 * 1024)
+        val serverMb = getServerMemoryMb()
+        val appMb = getAppMemoryMb()
+        return if (serverMb > 0) serverMb + appMb else Debug.getNativeHeapAllocatedSize() / (1024 * 1024)
+    }
+
+    override fun getHardwareStats(): Pair<Long, Long> {
+        val serverMb = getServerMemoryMb()
+        val appMb = getAppMemoryMb()
+        return Pair(serverMb, appMb)
+    }
+
+    fun getServerPid(): Int? {
+        serverProcess?.let { proc ->
+            try {
+                val pidField = proc.javaClass.getDeclaredField("pid")
+                pidField.isAccessible = true
+                return pidField.getInt(proc)
+            } catch (_: Exception) {}
+        }
+        try {
+            val procDir = java.io.File("/proc")
+            val pids = procDir.listFiles { file -> file.isDirectory && file.name.all { it.isDigit() } }
+            for (p in pids ?: emptyArray()) {
+                val cmdlineFile = java.io.File(p, "cmdline")
+                if (cmdlineFile.exists()) {
+                    val cmdline = cmdlineFile.readText()
+                    if (cmdline.contains("libllama-server.so")) {
+                        return p.name.toIntOrNull()
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return null
+    }
+
+    fun getServerMemoryMb(): Long {
+        val pid = getServerPid() ?: return 0L
+        return try {
+            val statusFile = java.io.File("/proc/$pid/status")
+            if (!statusFile.exists()) return 0L
+            statusFile.useLines { lines ->
+                val line = lines.firstOrNull { it.startsWith("VmRSS:") }
+                val kb = line?.replace(Regex("[^0-9]"), "")?.toLongOrNull() ?: 0L
+                kb / 1024
+            }
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
+    fun getAppMemoryMb(): Long {
+        return try {
+            val statusFile = java.io.File("/proc/self/status")
+            if (!statusFile.exists()) {
+                val rt = Runtime.getRuntime()
+                return (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024)
+            }
+            statusFile.useLines { lines ->
+                val line = lines.firstOrNull { it.startsWith("VmRSS:") }
+                val kb = line?.replace(Regex("[^0-9]"), "")?.toLongOrNull() ?: 0L
+                kb / 1024
+            }
+        } catch (_: Exception) {
+            val rt = Runtime.getRuntime()
+            (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024)
+        }
     }
 }
 

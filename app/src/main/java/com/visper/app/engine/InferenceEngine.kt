@@ -19,4 +19,5 @@ interface InferenceEngine {
     ): Flow<String>
     fun resetContext()
     fun close()
+    fun getHardwareStats(): Pair<Long, Long> = Pair(0L, 0L)
 }

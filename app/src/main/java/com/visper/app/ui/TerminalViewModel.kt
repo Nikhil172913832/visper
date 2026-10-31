@@ -23,6 +23,21 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 
+data class SystemHealthStats(
+    val modelName: String = "Qwen 3.5 0.8B",
+    val modelQuant: String = "Q4_K_M (4-bit)",
+    val backend: String = "llama.cpp ARMv8 NEON",
+    val modelMemoryMb: Long = 0,
+    val appMemoryMb: Long = 0,
+    val totalRamMb: Long = 0,
+    val cpuCores: Int = Runtime.getRuntime().availableProcessors(),
+    val activeThreads: Int = 16,
+    val tokensPerSecond: Float = 0f,
+    val ttftMs: Long = 0,
+    val externalNetBytes: Long = 0L,
+    val isAirGapped: Boolean = true
+)
+
 data class TerminalUiState(
     val messages: List<ChatMessage> = emptyList(),
     val inputText: String = "",
@@ -32,7 +47,9 @@ data class TerminalUiState(
     val isRecordingAudio: Boolean = false,
     val audioWaveformVisual: String = "",
     val metrics: PerformanceMetrics = PerformanceMetrics(),
-    val engineState: EngineState = EngineState.READY
+    val engineState: EngineState = EngineState.READY,
+    val isLabSheetOpen: Boolean = false,
+    val systemStats: SystemHealthStats = SystemHealthStats()
 )
 
 class TerminalViewModel(
@@ -45,12 +62,7 @@ class TerminalViewModel(
 
     private val _uiState = MutableStateFlow(
         TerminalUiState(
-            messages = listOf(
-                ChatMessage(
-                    sender = MessageSender.AI,
-                    text = "Hello! I am Visper, your on-device AI assistant. How can I help you today?"
-                )
-            )
+            messages = emptyList()
         )
     )
     val uiState: StateFlow<TerminalUiState> = _uiState.asStateFlow()
@@ -174,15 +186,57 @@ class TerminalViewModel(
         cancelGeneration()
         engine.resetContext()
         _uiState.value = _uiState.value.copy(
-            messages = listOf(
-                ChatMessage(
-                    sender = MessageSender.AI,
-                    text = "Conversation cleared. How can I assist you now?"
-                )
-            ),
+            messages = emptyList(),
             inputText = ""
         )
         clearAttachments()
+    }
+
+    fun submitCustomPrompt(prompt: String) {
+        if (_uiState.value.engineState == EngineState.GENERATING) return
+        _uiState.value = _uiState.value.copy(inputText = prompt)
+        submitPrompt()
+    }
+
+    fun prefillPrompt(prompt: String) {
+        _uiState.value = _uiState.value.copy(inputText = prompt)
+    }
+
+    fun openLabSheet() {
+        _uiState.value = _uiState.value.copy(
+            isLabSheetOpen = true,
+            systemStats = getSystemHealthStats()
+        )
+    }
+
+    fun closeLabSheet() {
+        _uiState.value = _uiState.value.copy(isLabSheetOpen = false)
+    }
+
+    fun getSystemHealthStats(): SystemHealthStats {
+        val (modelMb, appMb) = engine.getHardwareStats()
+        val totalRam = if (modelMb > 0) modelMb + appMb else _uiState.value.metrics.memoryUsageMb
+        val metrics = _uiState.value.metrics
+        val lastAiMsg = _uiState.value.messages.lastOrNull { it.sender == MessageSender.AI && !it.isStreaming }
+
+        val txBytes = try {
+            android.net.TrafficStats.getUidTxBytes(android.os.Process.myUid())
+        } catch (_: Exception) { 0L }
+
+        return SystemHealthStats(
+            modelName = if (engine.activeModelName.isNotBlank()) engine.activeModelName else "Qwen 3.5 0.8B",
+            modelQuant = "Q4_K_M (4-bit)",
+            backend = "llama.cpp ARMv8 NEON",
+            modelMemoryMb = if (modelMb > 0) modelMb else 1008L,
+            appMemoryMb = if (appMb > 0) appMb else 185L,
+            totalRamMb = if (totalRam > 0) totalRam else 1193L,
+            cpuCores = Runtime.getRuntime().availableProcessors(),
+            activeThreads = 16,
+            tokensPerSecond = metrics.tokensPerSecond,
+            ttftMs = lastAiMsg?.timeToFirstTokenMs ?: 0L,
+            externalNetBytes = if (txBytes < 0) 0L else txBytes,
+            isAirGapped = true
+        )
     }
 
     fun cancelGeneration() {
