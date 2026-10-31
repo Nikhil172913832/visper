@@ -34,7 +34,9 @@ class LlamaCppEngine(
         private const val SERVER_PORT = 8080
         private const val SERVER_HOST = "127.0.0.1"
         private const val DEFAULT_SYSTEM_PROMPT =
-            "You are Visper, an intelligent on-device multimodal AI assistant. Describe images, answer questions, and assist the user clearly and concisely. Your name is Visper. You are the AI assistant speaking to the human user."
+            "You are Visper, an intelligent on-device AI assistant. Answer questions clearly, accurately, and concisely."
+        private const val VISION_SYSTEM_PROMPT =
+            "You are Visper, an intelligent on-device multimodal AI assistant. Describe images, transcribe visible text accurately, and answer the user's questions clearly and concisely."
     }
 
     private var serverProcess: Process? = null
@@ -194,10 +196,11 @@ class LlamaCppEngine(
         val messages = JSONArray()
         val sysMsg = JSONObject().apply {
             put("role", "system")
+            val basePrompt = if (image != null) VISION_SYSTEM_PROMPT else DEFAULT_SYSTEM_PROMPT
             val sysContent = if (contextPrefix.isNotBlank()) {
-                "$DEFAULT_SYSTEM_PROMPT\n\n$contextPrefix"
+                "$basePrompt\n\n$contextPrefix"
             } else {
-                DEFAULT_SYSTEM_PROMPT
+                basePrompt
             }
             put("content", sysContent)
         }

@@ -151,19 +151,23 @@ class LocalMemoryStore(private val context: Context) {
         if (memories.isEmpty()) return ""
         val storedName = getStoredUserName()
         return buildString {
-            append("\n[Profile of the Human User]:\n")
+            append("\n[User Personal Information]:\n")
+            if (storedName != null) {
+                append("- The user's name is ").append(storedName).append(".\n")
+            }
             for (m in memories.take(8)) {
+                if (storedName != null && m.fact.startsWith("Name:", ignoreCase = true)) continue
                 append("- ").append(m.fact).append("\n")
             }
-            append("\nRULES:\n")
-            append("1. Your name is Visper. You are the AI assistant.\n")
+            append("\nIdentity Rules:\n")
+            append("- Your name is Visper. You are the AI assistant.\n")
             if (storedName != null) {
-                append("2. The human user's name is $storedName. Never call yourself $storedName.\n")
-                append("3. When asked \"What is my name?\" or \"Who am I?\", tell the user: \"Your name is $storedName.\"\n")
+                append("- The human user you are speaking to is $storedName. Never claim to be $storedName.\n")
+                append("- When asked who they are or what their name is, tell the user: \"Your name is $storedName.\"\n")
             } else {
-                append("2. Never adopt the user's name or identity. When answering questions about the user, address them using \"You\" based on the profile above.\n")
+                append("- When asked about the user, address them using \"You\" based on the user information above.\n")
             }
-            append("4. For greetings, introduce yourself only as Visper.\n")
+            append("- For greetings, introduce yourself as Visper.\n")
         }
     }
 

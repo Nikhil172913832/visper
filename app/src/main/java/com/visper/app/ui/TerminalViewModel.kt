@@ -576,7 +576,9 @@ class TerminalViewModel(
                 messages = _uiState.value.messages + initialAiMsg
             )
 
-            val memoryPrefix = memoryStore.getMemoryPromptContext()
+            // For vision tasks, keep system context pure to avoid multimodal cross-attention pollution
+            val isVisionTask = currentImage != null
+            val memoryPrefix = if (isVisionTask) "" else memoryStore.getMemoryPromptContext()
             val contextPrefix = buildString {
                 if (memoryPrefix.isNotBlank()) {
                     append(memoryPrefix)
