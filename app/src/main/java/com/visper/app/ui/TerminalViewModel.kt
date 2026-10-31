@@ -487,15 +487,15 @@ class TerminalViewModel(
 
         // 1. Evaluate Image Generation Intent
         if (imageGenerator.isImageGenRequest(displayPrompt)) {
-            val cleanPrompt = imageGenerator.extractPrompt(displayPrompt)
             val result = imageGenerator.generate(displayPrompt)
+            val subjectTitle = result.subject ?: result.prompt
             val action = AgentAction(
                 actionType = "IMAGE_GEN",
-                title = "AI Image Generated",
-                detail = "Rendered on-device at 512x512 for: \"$cleanPrompt\"",
+                title = "AI Canvas Artwork",
+                detail = "Rendered on-device at 512x512 for: \"$subjectTitle\"",
                 isSuccess = true
             )
-            val replyText = "I've generated an on-device image for: \"$cleanPrompt\""
+            val replyText = "Here is an on-device rendering for: \"$subjectTitle\"."
             val aiMsg = ChatMessage(
                 sender = MessageSender.AI,
                 text = replyText,
