@@ -19,6 +19,9 @@ class VisperTtsManager(private val context: Context) {
     private var tts: TextToSpeech? = null
     private var isReady = false
 
+    var preferredLanguage: String = "auto"
+    private var currentAppliedLocale: Locale? = null
+
     private val queuedUtterances = AtomicInteger(0)
     private var isSessionFinalized = false
     private var sessionCompletionCallback: (() -> Unit)? = null
@@ -34,15 +37,19 @@ class VisperTtsManager(private val context: Context) {
         try {
             tts = TextToSpeech(context.applicationContext) { status ->
                 if (status == TextToSpeech.SUCCESS) {
-                    val langResult = tts?.setLanguage(Locale.US)
+                    val defaultLoc = Locale.getDefault()
+                    val langResult = tts?.setLanguage(defaultLoc)
                     if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
-                        Log.w(TAG, "Locale.US not supported, falling back to default locale")
-                        tts?.setLanguage(Locale.getDefault())
+                        Log.w(TAG, "Default locale not supported, falling back to US")
+                        tts?.setLanguage(Locale.US)
+                        currentAppliedLocale = Locale.US
+                    } else {
+                        currentAppliedLocale = defaultLoc
                     }
                     tts?.setSpeechRate(1.05f)
                     tts?.setPitch(1.0f)
                     isReady = true
-                    Log.i(TAG, "TextToSpeech initialized successfully")
+                    Log.i(TAG, "TextToSpeech initialized successfully with initial locale: $currentAppliedLocale")
 
                     tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                         override fun onStart(utteranceId: String?) {
@@ -93,6 +100,69 @@ class VisperTtsManager(private val context: Context) {
     }
 
     /**
+     * Determines the optimal locale based on user setting or script detection:
+     * - Gurmukhi (U+0A00..U+0A7F) -> Punjabi (pa-IN)
+     * - Devanagari (U+0900..U+097F) -> Hindi (hi-IN)
+     * - Latin/English -> Indian English (en-IN) or system default
+     */
+    fun detectOptimalLocale(text: String): Locale {
+        when (preferredLanguage.lowercase()) {
+            "hi" -> return Locale("hi", "IN")
+            "pa" -> return Locale("pa", "IN")
+            "en" -> return Locale("en", "IN")
+        }
+
+        var hasGurmukhi = false
+        var hasDevanagari = false
+
+        for (char in text) {
+            val code = char.code
+            if (code in 0x0A00..0x0A7F) {
+                hasGurmukhi = true
+                break
+            } else if (code in 0x0900..0x097F) {
+                hasDevanagari = true
+            }
+        }
+
+        return when {
+            hasGurmukhi -> Locale("pa", "IN")
+            hasDevanagari -> Locale("hi", "IN")
+            else -> Locale("en", "IN")
+        }
+    }
+
+    private fun applyLocaleForText(text: String) {
+        val ttsEngine = tts ?: return
+        val targetLocale = detectOptimalLocale(text)
+
+        if (currentAppliedLocale?.language == targetLocale.language &&
+            currentAppliedLocale?.country == targetLocale.country) {
+            return
+        }
+
+        val candidates = when (targetLocale.language) {
+            "pa" -> listOf(Locale("pa", "IN"), Locale("pa"))
+            "hi" -> listOf(Locale("hi", "IN"), Locale("hi"))
+            "en" -> listOf(Locale("en", "IN"), Locale.US, Locale.getDefault())
+            else -> listOf(targetLocale, Locale.getDefault(), Locale.US)
+        }
+
+        for (candidate in candidates) {
+            val avail = ttsEngine.isLanguageAvailable(candidate)
+            if (avail >= TextToSpeech.LANG_AVAILABLE) {
+                val res = ttsEngine.setLanguage(candidate)
+                if (res >= TextToSpeech.LANG_AVAILABLE) {
+                    currentAppliedLocale = candidate
+                    Log.i(TAG, "Switched TTS voice locale to: ${candidate.toLanguageTag()}")
+                    return
+                }
+            }
+        }
+        Log.w(TAG, "Locale ${targetLocale.toLanguageTag()} not fully available on device TTS engine")
+    }
+
+    /**
      * Enqueues a single sentence or clause while the LLM is actively streaming tokens.
      * Uses QUEUE_FLUSH for the very first sentence to start speaking immediately,
      * and QUEUE_ADD for subsequent sentences to chain seamlessly without gaps.
@@ -102,6 +172,8 @@ class VisperTtsManager(private val context: Context) {
 
         val clean = cleanForSpeech(text)
         if (clean.isBlank()) return
+
+        applyLocaleForText(clean)
 
         val currentCount = queuedUtterances.getAndIncrement()
         val queueMode = if (currentCount == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
@@ -167,6 +239,8 @@ class VisperTtsManager(private val context: Context) {
             .replace(Regex("[*#_~`>]"), "")
             .replace(Regex("\\[.*?\\]"), "")
             .replace(Regex("\\(https?://[^)]+\\)"), "")
+            .replace("।", ". ")
+            .replace("॥", ". ")
             .replace(Regex("\\s+"), " ")
             .trim()
     }

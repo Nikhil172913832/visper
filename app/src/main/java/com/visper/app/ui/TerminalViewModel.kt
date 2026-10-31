@@ -74,7 +74,8 @@ data class TerminalUiState(
     val isModelInstalled: Boolean = true,
     val downloadProgress: ModelDownloadProgress = ModelDownloadProgress(),
     val showDownloadCard: Boolean = false,
-    val installedModelSizeMb: Long = 0L
+    val installedModelSizeMb: Long = 0L,
+    val voiceLanguage: String = "auto"
 )
 
 class TerminalViewModel(
@@ -255,9 +256,23 @@ class TerminalViewModel(
         _uiState.value = _uiState.value.copy(inputText = newText)
     }
 
+    fun setVoiceLanguage(language: String) {
+        _uiState.value = _uiState.value.copy(voiceLanguage = language)
+        ttsManager.preferredLanguage = language
+        audioManager.preferredLanguage = language
+    }
+
+    fun stopVoiceRecording() {
+        audioManager.stopListening()
+        _uiState.value = _uiState.value.copy(
+            isRecordingAudio = false,
+            audioWaveformVisual = ""
+        )
+    }
+
     fun toggleVoiceRecording() {
         if (_uiState.value.isRecordingAudio) {
-            audioManager.stopListening()
+            stopVoiceRecording()
         } else {
             audioManager.startListening()
         }
@@ -614,7 +629,7 @@ class TerminalViewModel(
             }
 
             val sentenceBuffer = StringBuilder()
-            val sentenceEndRegex = Regex("(?<=[.!?\\n])\\s+")
+            val sentenceEndRegex = Regex("(?<=[.!?।॥\\n])\\s+")
 
             val startTime = System.currentTimeMillis()
             var firstTokenTime: Long? = null

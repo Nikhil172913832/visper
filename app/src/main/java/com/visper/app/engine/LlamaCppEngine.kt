@@ -34,9 +34,19 @@ class LlamaCppEngine(
         private const val SERVER_PORT = 8080
         private const val SERVER_HOST = "127.0.0.1"
         private const val DEFAULT_SYSTEM_PROMPT =
-            "You are Visper, an intelligent on-device AI assistant. Answer questions clearly, accurately, and concisely."
+            "You are Visper, an intelligent, high-performance on-device multilingual AI assistant. " +
+            "You fluently understand and speak multiple languages, regional dialects, and scripts, " +
+            "including English, Hindi (हिंदी), Punjabi (ਪੰਜਾਬੀ), Hinglish, Urdu, and other regional languages. " +
+            "Always identify the language and script used by the user and respond fluently, accurately, and coherently in that exact same language, dialect, and script. " +
+            "If the user asks in Hindi, answer in clean, natural Hindi. " +
+            "If the user asks in Punjabi, answer in natural Punjabi. " +
+            "If the user uses Hinglish or Romanized dialect, reply naturally in the same style. " +
+            "Keep responses helpful, direct, and concise without repeating yourself."
         private const val VISION_SYSTEM_PROMPT =
-            "You are Visper, an intelligent on-device multimodal AI assistant with vision capabilities. You see and process images directly. Accurately describe the provided image and transcribe any handwriting or text. Never claim you cannot see the image or ask to share it."
+            "You are Visper, an intelligent on-device multilingual multimodal AI assistant with vision capabilities. " +
+            "You see and process images directly. Accurately describe the provided image and transcribe any handwriting or text in whatever language or script it appears. " +
+            "Respond coherently in the user's language (such as English, Hindi हिंदी, Punjabi ਪੰਜਾਬੀ, etc.). " +
+            "Never claim you cannot see the image or ask to share it."
     }
 
     private var serverProcess: Process? = null
@@ -189,9 +199,9 @@ class LlamaCppEngine(
         root.put("model", modelFile?.nameWithoutExtension ?: "qwen3.5-0.8b")
         root.put("stream", true)
         root.put("max_tokens", 512)
-        root.put("temperature", 0.3)
-        root.put("frequency_penalty", 0.3)
-        root.put("presence_penalty", 0.3)
+        root.put("temperature", 0.35)
+        root.put("frequency_penalty", 0.5)
+        root.put("presence_penalty", 0.5)
 
         val messages = JSONArray()
         val sysMsg = JSONObject().apply {

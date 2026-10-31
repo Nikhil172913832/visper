@@ -317,7 +317,10 @@ fun TerminalScreen(
         )
 
         if (uiState.isRecordingAudio) {
-            AudioRecordingBanner(waveformVisual = uiState.audioWaveformVisual)
+            AudioRecordingBanner(
+                waveformVisual = uiState.audioWaveformVisual,
+                onStop = { viewModel.stopVoiceRecording() }
+            )
         }
 
         // --- 4. MODERN INPUT BAR ---
@@ -327,7 +330,13 @@ fun TerminalScreen(
             onSubmit = { viewModel.submitPrompt() },
             onPickDoc = { docPicker.launch("*/*") },
             onPickImg = { imagePicker.launch("image/*") },
-            onToggleMic = { viewModel.openVoiceMode() },
+            onToggleMic = {
+                if (uiState.isRecordingAudio) {
+                    viewModel.stopVoiceRecording()
+                } else {
+                    viewModel.openVoiceMode()
+                }
+            },
             isRecording = uiState.isRecordingAudio,
             engineState = uiState.engineState
         )
@@ -368,6 +377,8 @@ if (uiState.isVoiceModeOpen) {
         rmsDb = uiState.voiceRmsDb,
         userTranscript = uiState.voiceTranscript,
         aiResponse = uiState.voiceAiResponse,
+        selectedLanguage = uiState.voiceLanguage,
+        onSelectLanguage = { viewModel.setVoiceLanguage(it) },
         onDismiss = { viewModel.closeVoiceMode() },
         onTapOrb = { viewModel.toggleVoiceModeListening() },
         onInterrupt = { viewModel.interruptVoiceSpeaking() }
@@ -1014,12 +1025,16 @@ private fun ActiveAttachmentsTray(
 }
 
 @Composable
-private fun AudioRecordingBanner(waveformVisual: String) {
+private fun AudioRecordingBanner(
+    waveformVisual: String,
+    onStop: () -> Unit
+) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF261214))
             .border(0.5.dp, AppRed)
+            .clickable { onStop() }
             .padding(horizontal = 14.dp, vertical = 8.dp)
     ) {
         Row(
@@ -1040,11 +1055,26 @@ private fun AudioRecordingBanner(waveformVisual: String) {
                     style = AppBodyStyle.copy(color = AppRed, fontSize = 13.sp)
                 )
             }
-            if (waveformVisual.isNotBlank()) {
-                Text(
-                    text = waveformVisual,
-                    style = AppBodyStyle.copy(color = AppRed, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (waveformVisual.isNotBlank()) {
+                    Text(
+                        text = waveformVisual,
+                        style = AppBodyStyle.copy(color = AppRed, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Surface(
+                    onClick = onStop,
+                    shape = RoundedCornerShape(4.dp),
+                    color = AppRed.copy(alpha = 0.2f),
+                    border = BorderStroke(0.5.dp, AppRed)
+                ) {
+                    Text(
+                        text = "STOP ⏹",
+                        style = AppCaptionStyle.copy(color = AppRed, fontWeight = FontWeight.Bold),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
             }
         }
     }

@@ -59,6 +59,8 @@ fun VoiceModeSheet(
     rmsDb: Float,
     userTranscript: String,
     aiResponse: String,
+    selectedLanguage: String = "auto",
+    onSelectLanguage: (String) -> Unit = {},
     onDismiss: () -> Unit,
     onTapOrb: () -> Unit,
     onInterrupt: () -> Unit
@@ -156,7 +158,44 @@ fun VoiceModeSheet(
                 modifier = Modifier.padding(top = 4.dp)
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Multilingual & Dialect Voice Selector
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val languages = listOf(
+                    "auto" to "Auto",
+                    "en" to "English",
+                    "hi" to "हिंदी",
+                    "pa" to "ਪੰਜਾਬੀ"
+                )
+                languages.forEach { (code, label) ->
+                    val isSelected = selectedLanguage.equals(code, ignoreCase = true)
+                    Surface(
+                        onClick = { onSelectLanguage(code) },
+                        shape = RoundedCornerShape(20.dp),
+                        color = if (isSelected) AppPrimary.copy(alpha = 0.2f) else AppSurface,
+                        border = androidx.compose.foundation.BorderStroke(
+                            width = 0.5.dp,
+                            color = if (isSelected) AppPrimary else AppBorder
+                        ),
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    ) {
+                        Text(
+                            text = label,
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (isSelected) AppPrimary else TextSecondary,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
 
             // Real-time transcript cards
             Column(

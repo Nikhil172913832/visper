@@ -22,6 +22,8 @@ class AudioTranscriptionManager(private val context: Context) {
 
     private var speechRecognizer: SpeechRecognizer? = null
 
+    var preferredLanguage: String = "auto"
+
     private val _recordingState = MutableStateFlow<AudioRecordingState>(AudioRecordingState.Idle)
     val recordingState: StateFlow<AudioRecordingState> = _recordingState.asStateFlow()
 
@@ -91,10 +93,20 @@ class AudioTranscriptionManager(private val context: Context) {
             })
         }
 
+        val targetLangTag = when (preferredLanguage.lowercase()) {
+            "hi" -> "hi-IN"
+            "pa" -> "pa-IN"
+            "en" -> "en-IN"
+            else -> Locale.getDefault().toLanguageTag()
+        }
+
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, targetLangTag)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, targetLangTag)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            // Extra languages hint for modern recognition engines
+            putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("hi-IN", "pa-IN", "en-IN", "en-US"))
             // Request on-device offline recognition for zero network / privacy
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
         }
@@ -108,9 +120,16 @@ class AudioTranscriptionManager(private val context: Context) {
     }
 
     fun stopListening() {
-        speechRecognizer?.stopListening()
-        speechRecognizer?.destroy()
-        speechRecognizer = null
+        try {
+            speechRecognizer?.stopListening()
+            speechRecognizer?.cancel()
+            speechRecognizer?.destroy()
+        } catch (e: Exception) {
+            // Ignore teardown errors
+        } finally {
+            speechRecognizer = null
+            _recordingState.value = AudioRecordingState.Idle
+        }
     }
 
     fun reset() {
