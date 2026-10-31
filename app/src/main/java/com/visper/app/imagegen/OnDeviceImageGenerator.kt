@@ -31,20 +31,9 @@ class OnDeviceImageGenerator(private val context: Context) {
     companion object {
         private const val TAG = "OnDeviceImageGenerator"
 
-        private val IMAGE_GEN_TRIGGERS = listOf(
-            "/draw ",
-            "draw a ",
-            "draw an ",
-            "draw ",
-            "generate image of ",
-            "generate an image of ",
-            "generate a picture of ",
-            "generate image: ",
-            "create image of ",
-            "create an image of ",
-            "paint a ",
-            "paint an ",
-            "paint "
+        private val INTENT_REGEX = Regex(
+            """^(?:/draw(?:\s+(.*))?|(?:can\s+you\s+|please\s+|could\s+you\s+|i\s+want\s+you\s+to\s+)?(?:draw|paint)(?:\s+(?:me\s+)?(?:an?\s+)?(.*))?|(?:can\s+you\s+|please\s+|could\s+you\s+|i\s+want\s+you\s+to\s+)?(?:generate|create|render|make)\s+(?:me\s+)?(?:an?\s+)?(?:image|picture|photo|painting|drawing|illustration|sketch|art)\s*(?:of|for|with|about|showing|depicting)?\s*:?\s*(.*))$""",
+            RegexOption.IGNORE_CASE
         )
     }
 
@@ -53,18 +42,16 @@ class OnDeviceImageGenerator(private val context: Context) {
     }
 
     fun isImageGenRequest(text: String): Boolean {
-        val lower = text.trim().lowercase()
-        return IMAGE_GEN_TRIGGERS.any { lower.startsWith(it) } || lower == "/draw"
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return false
+        return INTENT_REGEX.matches(trimmed)
     }
 
     fun extractPrompt(text: String): String {
-        val lower = text.trim().lowercase()
-        for (trigger in IMAGE_GEN_TRIGGERS) {
-            if (lower.startsWith(trigger)) {
-                return text.trim().substring(trigger.length).trim()
-            }
-        }
-        return text.replace(Regex("(?i)^/draw"), "").trim().ifBlank { "Abstract generative art" }
+        val trimmed = text.trim()
+        val match = INTENT_REGEX.matchEntire(trimmed) ?: return "Abstract generative art"
+        val extracted = match.groupValues.drop(1).firstOrNull { it.isNotBlank() }?.trim()
+        return if (!extracted.isNullOrBlank()) extracted else "Abstract generative art"
     }
 
     /**
