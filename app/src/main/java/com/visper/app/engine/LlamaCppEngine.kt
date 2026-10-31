@@ -34,18 +34,14 @@ class LlamaCppEngine(
         private const val SERVER_PORT = 8080
         private const val SERVER_HOST = "127.0.0.1"
         private const val DEFAULT_SYSTEM_PROMPT =
-            "You are Visper, an intelligent, high-performance on-device multilingual AI assistant. " +
-            "You fluently understand and speak multiple languages, regional dialects, and scripts, " +
-            "including English, Hindi (हिंदी), Punjabi (ਪੰਜਾਬੀ), Hinglish, Urdu, and other regional languages. " +
-            "Always identify the language and script used by the user and respond fluently, accurately, and coherently in that exact same language, dialect, and script. " +
-            "If the user asks in Hindi, answer in clean, natural Hindi. " +
-            "If the user asks in Punjabi, answer in natural Punjabi. " +
-            "If the user uses Hinglish or Romanized dialect, reply naturally in the same style. " +
-            "Keep responses helpful, direct, and concise without repeating yourself."
+            "You are Visper, an intelligent, on-device multilingual AI assistant. " +
+            "You fluently understand and speak multiple languages including English, Hindi (हिंदी), Punjabi (ਪੰਜਾਬੀ), and Hinglish. " +
+            "When responding in Hindi, write natural, grammatically correct Hindi with proper Subject-Object-Verb (कर्ता-कर्म-क्रिया) structure and correct verb agreements (e.g. 'नमस्ते! मैं विस्पर हूँ। मैं आपकी क्या सहायता कर सकता हूँ?'). " +
+            "Avoid literal translations from English. Keep sentences clear, simple, concise, and natural without rambling or repeating words."
         private const val VISION_SYSTEM_PROMPT =
             "You are Visper, an intelligent on-device multilingual multimodal AI assistant with vision capabilities. " +
             "You see and process images directly. Accurately describe the provided image and transcribe any handwriting or text in whatever language or script it appears. " +
-            "Respond coherently in the user's language (such as English, Hindi हिंदी, Punjabi ਪੰਜਾਬੀ, etc.). " +
+            "Respond in clean, natural, and grammatically correct sentences in the user's language (such as English, Hindi हिंदी, Punjabi ਪੰਜਾਬੀ, etc.). " +
             "Never claim you cannot see the image or ask to share it."
     }
 
@@ -199,9 +195,10 @@ class LlamaCppEngine(
         root.put("model", modelFile?.nameWithoutExtension ?: "qwen3.5-0.8b")
         root.put("stream", true)
         root.put("max_tokens", 512)
-        root.put("temperature", 0.35)
-        root.put("frequency_penalty", 0.5)
-        root.put("presence_penalty", 0.5)
+        root.put("temperature", 0.3)
+        root.put("top_p", 0.85)
+        root.put("frequency_penalty", 0.1)
+        root.put("presence_penalty", 0.1)
 
         val messages = JSONArray()
         val sysMsg = JSONObject().apply {

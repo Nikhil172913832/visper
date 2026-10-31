@@ -105,10 +105,16 @@ class VisperEngine(
 
         // Auto-load local GGUF if available and engine not yet initialized
         val appModelsDir = context.getExternalFilesDir("models")
-        val ggufCandidate = listOf(
-            File(appModelsDir, "qwen2.5-0.5b-instruct-q4_k_m.gguf"),
-            File("/sdcard/Download/qwen2.5-0.5b-instruct-q4_k_m.gguf")
-        ).firstOrNull { it.exists() }
+        val localModels = appModelsDir?.listFiles()?.filter { f ->
+            f.isFile && f.name.endsWith(".gguf") && !f.name.contains("mmproj", ignoreCase = true)
+        }?.sortedByDescending { it.length() } ?: emptyList()
+
+        val downloadDir = File("/sdcard/Download")
+        val downloadModels = downloadDir.listFiles()?.filter { f ->
+            f.isFile && f.name.endsWith(".gguf") && !f.name.contains("mmproj", ignoreCase = true)
+        }?.sortedByDescending { it.length() } ?: emptyList()
+
+        val ggufCandidate = (localModels + downloadModels).firstOrNull()
 
         if (ggufCandidate != null && activeEngine == null) {
             return flow {
@@ -126,7 +132,7 @@ class VisperEngine(
         }
 
         return flow {
-            emit("[Visper: No model loaded. Please load a GGUF model via '/model' or place qwen2.5-0.5b-instruct-q4_k_m.gguf in app storage.]")
+            emit("[Visper: No model loaded. Please download the AI Core or place a GGUF model in app storage.]")
         }
     }
 
