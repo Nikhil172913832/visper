@@ -18,6 +18,8 @@ import com.visper.app.model.Attachment
 import com.visper.app.model.ChatMessage
 import com.visper.app.model.EngineState
 import com.visper.app.model.MessageSender
+import com.visper.app.model.ModelDownloadManager
+import com.visper.app.model.ModelDownloadProgress
 import com.visper.app.model.PerformanceMetrics
 import com.visper.app.memory.LocalMemoryStore
 import com.visper.app.memory.MemoryFact
@@ -68,7 +70,11 @@ data class TerminalUiState(
     val voiceRmsDb: Float = 0f,
     val voiceTranscript: String = "",
     val voiceAiResponse: String = "",
-    val isFlashlightActive: Boolean = false
+    val isFlashlightActive: Boolean = false,
+    val isModelInstalled: Boolean = true,
+    val downloadProgress: ModelDownloadProgress = ModelDownloadProgress(),
+    val showDownloadCard: Boolean = false,
+    val installedModelSizeMb: Long = 0L
 )
 
 class TerminalViewModel(
@@ -81,6 +87,7 @@ class TerminalViewModel(
     private val memoryStore = LocalMemoryStore(application)
     private val ttsManager = VisperTtsManager(application)
     private val deviceActionManager = DeviceActionManager(application)
+    private val modelDownloadManager = ModelDownloadManager(application)
     private var generationJob: kotlinx.coroutines.Job? = null
 
     private val _uiState = MutableStateFlow(
@@ -100,13 +107,33 @@ class TerminalViewModel(
             newSess
         }
 
+        val installed = modelDownloadManager.isModelInstalled()
+        val installedFile = modelDownloadManager.getInstalledModelFile()
+
         _uiState.value = _uiState.value.copy(
             currentSessionId = initialSession.id,
             currentSessionTitle = initialSession.title,
             messages = initialSession.messages,
             sessions = sessionManager.getSessionList(),
-            memories = memoryStore.getMemories()
+            memories = memoryStore.getMemories(),
+            isModelInstalled = installed,
+            showDownloadCard = !installed,
+            installedModelSizeMb = (installedFile?.length() ?: 0L) / (1024 * 1024)
         )
+
+        viewModelScope.launch {
+            modelDownloadManager.progress.collect { prog ->
+                _uiState.value = _uiState.value.copy(downloadProgress = prog)
+                if (prog.isCompleted) {
+                    val finalFile = modelDownloadManager.getInstalledModelFile()
+                    _uiState.value = _uiState.value.copy(
+                        isModelInstalled = true,
+                        showDownloadCard = false,
+                        installedModelSizeMb = (finalFile?.length() ?: 0L) / (1024 * 1024)
+                    )
+                }
+            }
+        }
 
         viewModelScope.launch {
             engine.metrics.collect { metrics ->
@@ -188,23 +215,40 @@ class TerminalViewModel(
             }
         }
 
-        // Quietly detect and auto-initialize model in background
+        // Auto-initialize if model is installed
         viewModelScope.launch {
-            val appModelsDir = getApplication<Application>().getExternalFilesDir("models")
-            val candidatePaths = listOf(
-                java.io.File(appModelsDir, "Qwen3.5-0.8B-Q4_K_M.gguf").absolutePath,
-                java.io.File(appModelsDir, "qwen3.5-0.8b-q4_k_m.gguf").absolutePath,
-                java.io.File(appModelsDir, "qwen2.5-0.5b-instruct-q4_k_m.gguf").absolutePath,
-                "/sdcard/Android/data/com.visper.app/files/models/Qwen3.5-0.8B-Q4_K_M.gguf",
-                "/sdcard/Download/Qwen3.5-0.8B-Q4_K_M.gguf",
-                "/sdcard/Download/qwen2.5-0.5b-instruct-q4_k_m.gguf",
-                java.io.File(appModelsDir, "gemma-2b-it-cpu-int4.bin").absolutePath
-            )
-            val detected = candidatePaths.firstOrNull { java.io.File(it).exists() }
-            if (detected != null) {
-                engine.initialize(detected, useGpu = false)
+            if (installed && installedFile != null) {
+                engine.initialize(installedFile.absolutePath, useGpu = false)
             }
         }
+    }
+
+    fun startModelDownload() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(showDownloadCard = true)
+            modelDownloadManager.startDownload { completedFile ->
+                viewModelScope.launch {
+                    engine.initialize(completedFile.absolutePath, useGpu = false)
+                    _uiState.value = _uiState.value.copy(
+                        isModelInstalled = true,
+                        showDownloadCard = false,
+                        installedModelSizeMb = completedFile.length() / (1024 * 1024)
+                    )
+                }
+            }
+        }
+    }
+
+    fun cancelModelDownload() {
+        modelDownloadManager.cancelDownload()
+    }
+
+    fun dismissDownloadCard() {
+        _uiState.value = _uiState.value.copy(showDownloadCard = false)
+    }
+
+    fun openDownloadCard() {
+        _uiState.value = _uiState.value.copy(showDownloadCard = true)
     }
 
     fun onInputTextChanged(newText: String) {
@@ -482,6 +526,16 @@ class TerminalViewModel(
             attachedDoc = null
         )
         saveCurrentSession()
+
+        // Check if model is downloaded
+        if (!_uiState.value.isModelInstalled) {
+            _uiState.value = _uiState.value.copy(showDownloadCard = true)
+            appendMessage(ChatMessage(
+                sender = MessageSender.ERROR,
+                text = "The on-device AI model is not downloaded yet. Please tap 'Download AI Model' above to install the offline weights."
+            ))
+            return
+        }
 
         // 1. Evaluate Agentic Device Action Intent
         val action = deviceActionManager.evaluateAndExecute(displayPrompt)

@@ -42,6 +42,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -58,6 +59,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.visper.app.memory.MemoryFact
 import com.visper.app.model.AgentAction
+import com.visper.app.model.ModelDownloadProgress
 import com.visper.app.session.SessionMetadata
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
@@ -209,6 +211,12 @@ fun TerminalScreen(
         if (uiState.messages.isEmpty()) {
             WelcomeHeroSection(
                 modifier = Modifier.weight(1f),
+                isModelInstalled = uiState.isModelInstalled,
+                downloadProgress = uiState.downloadProgress,
+                showDownloadCard = uiState.showDownloadCard,
+                onStartDownload = { viewModel.startModelDownload() },
+                onCancelDownload = { viewModel.cancelModelDownload() },
+                onDismissDownload = { viewModel.dismissDownloadCard() },
                 onOpenLab = { viewModel.openLabSheet() },
                 onBenchmarkClick = {
                     viewModel.submitCustomPrompt("Generate a concise 50-word benchmark explaining why on-device AI guarantees user privacy.")
@@ -239,6 +247,19 @@ fun TerminalScreen(
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     item { Spacer(modifier = Modifier.height(6.dp)) }
+
+                    // Model Download Banner in active chat if not installed or downloading
+                    if (!uiState.isModelInstalled || uiState.downloadProgress.isDownloading) {
+                        item {
+                            ModelDownloadCard(
+                                isInstalled = uiState.isModelInstalled,
+                                progress = uiState.downloadProgress,
+                                onStartDownload = { viewModel.startModelDownload() },
+                                onCancelDownload = { viewModel.cancelModelDownload() },
+                                onDismiss = { viewModel.dismissDownloadCard() }
+                            )
+                        }
+                    }
 
                     items(
                         items = uiState.messages,
@@ -317,6 +338,10 @@ fun TerminalScreen(
 if (uiState.isLabSheetOpen) {
     HardwareInspectorSheet(
         stats = uiState.systemStats,
+        isModelInstalled = uiState.isModelInstalled,
+        installedModelSizeMb = uiState.installedModelSizeMb,
+        downloadProgress = uiState.downloadProgress,
+        onStartDownload = { viewModel.startModelDownload() },
         onDismiss = { viewModel.closeLabSheet() },
         onRunBenchmark = {
             viewModel.closeLabSheet()
@@ -471,6 +496,12 @@ private fun AppHeader(
 @Composable
 private fun WelcomeHeroSection(
     modifier: Modifier = Modifier,
+    isModelInstalled: Boolean,
+    downloadProgress: ModelDownloadProgress,
+    showDownloadCard: Boolean,
+    onStartDownload: () -> Unit,
+    onCancelDownload: () -> Unit,
+    onDismissDownload: () -> Unit,
     onOpenLab: () -> Unit,
     onBenchmarkClick: () -> Unit,
     onPickDoc: () -> Unit,
@@ -557,7 +588,20 @@ private fun WelcomeHeroSection(
             }
         }
 
-        Spacer(modifier = Modifier.height(28.dp))
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Model Download Banner (prominent if not downloaded or actively downloading)
+        if (!isModelInstalled || showDownloadCard || downloadProgress.isDownloading) {
+            ModelDownloadCard(
+                isInstalled = isModelInstalled,
+                progress = downloadProgress,
+                onStartDownload = onStartDownload,
+                onCancelDownload = onCancelDownload,
+                onDismiss = onDismissDownload,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(18.dp))
+        }
 
         // Prompt Discovery Grid (2x2)
         Row(
@@ -1135,6 +1179,10 @@ private fun ActionButton(
 @Composable
 private fun HardwareInspectorSheet(
     stats: SystemHealthStats,
+    isModelInstalled: Boolean,
+    installedModelSizeMb: Long,
+    downloadProgress: ModelDownloadProgress,
+    onStartDownload: () -> Unit,
     onDismiss: () -> Unit,
     onRunBenchmark: () -> Unit
 ) {
@@ -1269,6 +1317,95 @@ private fun HardwareInspectorSheet(
                     value = "llama.cpp",
                     detail = "ARMv8 64-bit Core"
                 )
+            }
+
+            // Section 2b: Neural Core Weights & Download State
+            Text(
+                text = "NEURAL CORE WEIGHTS ON DEVICE",
+                style = AppCaptionStyle.copy(color = TextMuted, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+            )
+
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = AppSurfaceElevated,
+                border = BorderStroke(0.5.dp, AppBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Qwen 3.5 0.8B + Vision Projector",
+                                style = AppBodyStyle.copy(fontWeight = FontWeight.Bold, fontSize = 13.sp, color = TextPrimary)
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = if (isModelInstalled) "Installed on device • ${if (installedModelSizeMb > 0) "$installedModelSizeMb MB" else "~703 MB"}" else "Weights not downloaded yet",
+                                style = AppCaptionStyle.copy(
+                                    color = if (isModelInstalled) AppAccent else AppRed,
+                                    fontSize = 11.sp
+                                )
+                            )
+                        }
+
+                        if (!downloadProgress.isDownloading) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isModelInstalled) Color(0xFF27272A) else AppPrimary,
+                                onClick = onStartDownload
+                            ) {
+                                Text(
+                                    text = if (isModelInstalled) "Re-download" else "Download",
+                                    style = AppCaptionStyle.copy(
+                                        color = if (isModelInstalled) TextSecondary else Color.White,
+                                        fontWeight = FontWeight.Medium
+                                    ),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    if (downloadProgress.isDownloading) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "Downloading ${downloadProgress.currentFileName} (${downloadProgress.fileIndex}/2)",
+                            style = AppCaptionStyle.copy(color = AppPrimary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        LinearProgressIndicator(
+                            progress = { downloadProgress.overallProgress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = AppPrimary,
+                            trackColor = AppSurface
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            val dlMb = downloadProgress.bytesDownloaded / (1024 * 1024)
+                            val totMb = downloadProgress.totalBytes / (1024 * 1024)
+                            val pct = (downloadProgress.overallProgress * 100).toInt()
+                            Text(
+                                text = "$dlMb MB / $totMb MB ($pct%)",
+                                style = AppCaptionStyle.copy(color = TextSecondary, fontSize = 10.sp)
+                            )
+                            val spd = "%.1f".format(downloadProgress.speedMbPerSec)
+                            Text(
+                                text = "⚡ $spd MB/s",
+                                style = AppCaptionStyle.copy(color = TextMuted, fontSize = 10.sp)
+                            )
+                        }
+                    }
+                }
             }
 
             // Section 3: Hardware & Memory Allocation
@@ -1778,5 +1915,251 @@ private fun formatRelativeTime(timestamp: Long): String {
         diffSec < 3600 -> "${diffSec / 60}m ago"
         diffSec < 86400 -> "${diffSec / 3600}h ago"
         else -> "${diffSec / 86400}d ago"
+    }
+}
+
+@Composable
+private fun ModelDownloadCard(
+    isInstalled: Boolean,
+    progress: ModelDownloadProgress,
+    onStartDownload: () -> Unit,
+    onCancelDownload: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(AppSurfaceElevated)
+            .border(
+                1.dp,
+                if (progress.isDownloading) AppPrimary.copy(alpha = 0.6f) else AppBorderLight,
+                RoundedCornerShape(16.dp)
+            )
+            .padding(16.dp)
+    ) {
+        // Header Row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(if (isInstalled) Color(0xFF064E3B) else AppPrimary.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (isInstalled) "✓" else "🧠",
+                        fontSize = 16.sp,
+                        color = if (isInstalled) AppAccent else AppPrimary
+                    )
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(
+                        text = if (isInstalled) "Neural Core Active" else "On-Device AI Core",
+                        style = AppBodyStyle.copy(fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 14.sp)
+                    )
+                    Text(
+                        text = "Qwen 3.5 0.8B Multimodal (703 MB)",
+                        style = AppCaptionStyle.copy(color = TextSecondary, fontSize = 11.sp)
+                    )
+                }
+            }
+
+            if (isInstalled) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF0F231C),
+                    border = BorderStroke(0.5.dp, AppAccent.copy(alpha = 0.5f))
+                ) {
+                    Text(
+                        text = "Ready • Offline",
+                        style = AppCaptionStyle.copy(color = AppAccent, fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            } else if (!progress.isDownloading) {
+                Surface(
+                    shape = CircleShape,
+                    color = Color.Transparent,
+                    onClick = onDismiss
+                ) {
+                    Text(
+                        text = "✕",
+                        style = AppCaptionStyle.copy(color = TextMuted, fontSize = 14.sp),
+                        modifier = Modifier.padding(6.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        when {
+            progress.isDownloading -> {
+                // Live progress state
+                Text(
+                    text = "Downloading ${progress.currentFileName} (${progress.fileIndex} of ${progress.totalFiles})",
+                    style = AppCaptionStyle.copy(color = AppPrimary, fontWeight = FontWeight.Medium, fontSize = 12.sp)
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                LinearProgressIndicator(
+                    progress = { progress.overallProgress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(4.dp)),
+                    color = AppPrimary,
+                    trackColor = AppSurface
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val downloadedMb = progress.bytesDownloaded / (1024 * 1024)
+                    val totalMb = progress.totalBytes / (1024 * 1024)
+                    val pct = (progress.overallProgress * 100).toInt()
+                    Text(
+                        text = "$downloadedMb MB / $totalMb MB ($pct%)",
+                        style = AppCaptionStyle.copy(color = TextSecondary, fontSize = 11.sp)
+                    )
+
+                    val speedStr = "%.1f".format(progress.speedMbPerSec)
+                    val etaStr = if (progress.etaSeconds > 0) "${progress.etaSeconds}s remaining" else "Calculating..."
+                    Text(
+                        text = "⚡ $speedStr MB/s • $etaStr",
+                        style = AppCaptionStyle.copy(color = TextMuted, fontSize = 11.sp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF27272A),
+                        onClick = onCancelDownload
+                    ) {
+                        Text(
+                            text = "Cancel",
+                            style = AppCaptionStyle.copy(color = AppRed, fontWeight = FontWeight.Medium),
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+
+            progress.errorMessage != null -> {
+                // Error state
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFF2A1215),
+                    border = BorderStroke(0.5.dp, AppRed.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Error: ${progress.errorMessage}",
+                        style = AppCaptionStyle.copy(color = AppRed, fontSize = 11.sp),
+                        modifier = Modifier.padding(8.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = AppPrimary,
+                    onClick = onStartDownload,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Retry Download",
+                        style = AppBodyStyle.copy(color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(vertical = 10.dp)
+                    )
+                }
+            }
+
+            !isInstalled -> {
+                // Idle / Not installed state
+                Text(
+                    text = "Visper executes 100% on-device for total privacy. Download the neural weights once (703 MB) for offline reasoning, handwriting OCR, and vision.",
+                    style = AppCaptionStyle.copy(color = TextMuted, fontSize = 12.sp, lineHeight = 16.sp)
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    SpecPill(label = "🧠 LLM 508MB")
+                    SpecPill(label = "👁️ Vision 195MB")
+                    SpecPill(label = "🔒 100% Offline")
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = AppPrimary,
+                    onClick = onStartDownload,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 11.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(text = "📥", fontSize = 14.sp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Download AI Model (703 MB)",
+                            style = AppBodyStyle.copy(
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpecPill(label: String) {
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = Color(0xFF141417),
+        border = BorderStroke(0.5.dp, AppBorder)
+    ) {
+        Text(
+            text = label,
+            style = AppCaptionStyle.copy(color = TextSecondary, fontSize = 10.sp),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+        )
     }
 }
