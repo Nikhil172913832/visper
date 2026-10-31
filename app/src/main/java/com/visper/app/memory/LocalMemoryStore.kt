@@ -22,17 +22,40 @@ class LocalMemoryStore(private val context: Context) {
         return try {
             val array = JSONArray(memoryFile.readText())
             val list = mutableListOf<MemoryFact>()
+            val seenCategories = mutableSetOf<String>()
+            val seenFacts = mutableSetOf<String>()
+
             for (i in 0 until array.length()) {
                 val obj = array.getJSONObject(i)
+                val rawFact = obj.getString("fact")
+                val cleanFact = normalizeFact(rawFact)
+                val category = getMemoryCategory(cleanFact)
+
+                // Category-level deduplication (e.g., keep newest Name/Role)
+                if (category != null) {
+                    if (seenCategories.contains(category)) continue
+                    seenCategories.add(category)
+                }
+
+                // Exact fact deduplication
+                val lowerFact = cleanFact.lowercase()
+                if (seenFacts.contains(lowerFact)) continue
+                seenFacts.add(lowerFact)
+
                 list.add(
                     MemoryFact(
                         id = obj.getString("id"),
-                        fact = obj.getString("fact"),
+                        fact = cleanFact,
                         createdAt = obj.optLong("createdAt", System.currentTimeMillis())
                     )
                 )
             }
-            list.sortedByDescending { it.createdAt }
+            val sorted = list.sortedByDescending { it.createdAt }
+            // If cleaned/normalized differs from raw count, persist back
+            if (sorted.size != array.length()) {
+                saveMemories(sorted)
+            }
+            sorted
         } catch (e: Exception) {
             android.util.Log.e("LocalMemoryStore", "Failed to read memories", e)
             emptyList()
@@ -41,16 +64,46 @@ class LocalMemoryStore(private val context: Context) {
 
     @Synchronized
     fun addMemory(fact: String): MemoryFact {
-        val cleanFact = fact.trim()
+        val cleanFact = normalizeFact(fact)
         val current = getMemories().toMutableList()
-        // Deduplicate
-        val existing = current.find { it.fact.equals(cleanFact, ignoreCase = true) }
-        if (existing != null) return existing
+
+        val category = getMemoryCategory(cleanFact)
+        if (category != null) {
+            // Replace any existing fact of this same category (e.g., updating Name or Role)
+            current.removeAll { getMemoryCategory(it.fact) == category }
+        } else {
+            // Exact deduplicate
+            val existing = current.find { it.fact.equals(cleanFact, ignoreCase = true) }
+            if (existing != null) return existing
+        }
 
         val newFact = MemoryFact(fact = cleanFact)
         current.add(0, newFact)
         saveMemories(current)
         return newFact
+    }
+
+    fun normalizeFact(fact: String): String {
+        val trim = fact.trim()
+        return when {
+            trim.startsWith("The user's name is ", ignoreCase = true) -> "Name: " + trim.substring(19).trim()
+            trim.startsWith("User name is ", ignoreCase = true) -> "Name: " + trim.substring(13).trim()
+            trim.startsWith("The user is a ", ignoreCase = true) -> "Role: " + trim.substring(14).trim()
+            trim.startsWith("The user is ", ignoreCase = true) -> "Role: " + trim.substring(12).trim()
+            trim.startsWith("The user studies ", ignoreCase = true) -> "Studies: " + trim.substring(17).trim()
+            trim.startsWith("The user prefers ", ignoreCase = true) -> "Preference: " + trim.substring(17).trim()
+            else -> trim
+        }
+    }
+
+    private fun getMemoryCategory(fact: String): String? {
+        val lower = normalizeFact(fact).lowercase()
+        return when {
+            lower.startsWith("name:") -> "name"
+            lower.startsWith("role:") || lower.startsWith("profession:") -> "role"
+            lower.startsWith("studies:") -> "studies"
+            else -> null
+        }
     }
 
     @Synchronized
@@ -89,10 +142,6 @@ class LocalMemoryStore(private val context: Context) {
                 val candidate = f.substring(5).trim()
                 if (candidate.isNotBlank()) return candidate
             }
-            if (f.startsWith("The user's name is", ignoreCase = true)) {
-                val candidate = f.substring(18).trim()
-                if (candidate.isNotBlank()) return candidate
-            }
         }
         return null
     }
@@ -104,15 +153,7 @@ class LocalMemoryStore(private val context: Context) {
         return buildString {
             append("\n[Profile of the Human User]:\n")
             for (m in memories.take(8)) {
-                val cleanFact = when {
-                    m.fact.startsWith("The user's name is ", ignoreCase = true) -> "Name: " + m.fact.substring(19)
-                    m.fact.startsWith("The user is a ", ignoreCase = true) -> "Role: " + m.fact.substring(14)
-                    m.fact.startsWith("The user is ", ignoreCase = true) -> "Role: " + m.fact.substring(12)
-                    m.fact.startsWith("The user studies ", ignoreCase = true) -> "Studies: " + m.fact.substring(17)
-                    m.fact.startsWith("The user prefers ", ignoreCase = true) -> "Preference: " + m.fact.substring(17)
-                    else -> m.fact
-                }
-                append("- ").append(cleanFact).append("\n")
+                append("- ").append(m.fact).append("\n")
             }
             append("\nRULES:\n")
             append("1. Your name is Visper. You are the AI assistant.\n")
