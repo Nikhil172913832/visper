@@ -62,7 +62,12 @@ class MainActivity : ComponentActivity() {
         if (intent == null) return
         val testImg = intent.getStringExtra("test_image_path")
         val testPrompt = intent.getStringExtra("test_prompt")
+        val testVoice = intent.getBooleanExtra("test_voice", false)
         lifecycleScope.launch {
+            if (testVoice) {
+                viewModel.openVoiceMode()
+                delay(300)
+            }
             if (!testImg.isNullOrBlank()) {
                 val file = java.io.File(testImg)
                 if (file.exists()) {
@@ -76,8 +81,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
             if (!testPrompt.isNullOrBlank()) {
-                viewModel.onInputTextChanged(testPrompt)
-                viewModel.submitPrompt()
+                if (testVoice) {
+                    viewModel.submitCustomPrompt(testPrompt)
+                } else {
+                    viewModel.onInputTextChanged(testPrompt)
+                    viewModel.submitPrompt()
+                }
             }
         }
     }

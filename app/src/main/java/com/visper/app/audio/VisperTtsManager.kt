@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
 
 class VisperTtsManager(private val context: Context) {
 
@@ -17,7 +18,10 @@ class VisperTtsManager(private val context: Context) {
 
     private var tts: TextToSpeech? = null
     private var isReady = false
-    private var pendingUtteranceCallback: (() -> Unit)? = null
+
+    private val queuedUtterances = AtomicInteger(0)
+    private var isSessionFinalized = false
+    private var sessionCompletionCallback: (() -> Unit)? = null
 
     private val _isSpeaking = MutableStateFlow(false)
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
@@ -46,17 +50,25 @@ class VisperTtsManager(private val context: Context) {
                         }
 
                         override fun onDone(utteranceId: String?) {
-                            _isSpeaking.value = false
-                            val cb = pendingUtteranceCallback
-                            pendingUtteranceCallback = null
-                            cb?.invoke()
+                            val remaining = queuedUtterances.decrementAndGet()
+                            Log.d(TAG, "Utterance completed: $utteranceId, remaining: $remaining, finalized: $isSessionFinalized")
+                            if (remaining <= 0 && isSessionFinalized) {
+                                _isSpeaking.value = false
+                                val cb = sessionCompletionCallback
+                                sessionCompletionCallback = null
+                                cb?.invoke()
+                            }
                         }
 
                         override fun onError(utteranceId: String?) {
-                            _isSpeaking.value = false
-                            val cb = pendingUtteranceCallback
-                            pendingUtteranceCallback = null
-                            cb?.invoke()
+                            val remaining = queuedUtterances.decrementAndGet()
+                            Log.w(TAG, "Utterance error: $utteranceId, remaining: $remaining")
+                            if (remaining <= 0 && isSessionFinalized) {
+                                _isSpeaking.value = false
+                                val cb = sessionCompletionCallback
+                                sessionCompletionCallback = null
+                                cb?.invoke()
+                            }
                         }
                     })
                 } else {
@@ -70,35 +82,61 @@ class VisperTtsManager(private val context: Context) {
         }
     }
 
-    fun speak(text: String, onDone: (() -> Unit)? = null) {
-        if (!isReady || text.isBlank()) {
-            onDone?.invoke()
-            return
-        }
-
+    /**
+     * Starts a streaming audio session, clearing previous queues and setting up completion listener.
+     */
+    fun startStreamingSession(onDone: (() -> Unit)? = null) {
         stop()
-        pendingUtteranceCallback = onDone
+        queuedUtterances.set(0)
+        isSessionFinalized = false
+        sessionCompletionCallback = onDone
+    }
 
-        // Clean text for speech: remove markdown symbols, bullets, asterisks, brackets
-        val cleanText = text
-            .replace(Regex("[*#_~`>]"), "")
-            .replace(Regex("\\[.*?\\]"), "")
-            .replace(Regex("\\s+"), " ")
-            .trim()
+    /**
+     * Enqueues a single sentence or clause while the LLM is actively streaming tokens.
+     * Uses QUEUE_FLUSH for the very first sentence to start speaking immediately,
+     * and QUEUE_ADD for subsequent sentences to chain seamlessly without gaps.
+     */
+    fun enqueueStreamingChunk(text: String) {
+        if (!isReady || text.isBlank()) return
 
-        if (cleanText.isBlank()) {
-            onDone?.invoke()
-            return
+        val clean = cleanForSpeech(text)
+        if (clean.isBlank()) return
+
+        val currentCount = queuedUtterances.getAndIncrement()
+        val queueMode = if (currentCount == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+        val utteranceId = "stream_chunk_${System.currentTimeMillis()}_$currentCount"
+
+        _isSpeaking.value = true
+        val res = tts?.speak(clean, queueMode, null, utteranceId)
+        if (res != TextToSpeech.SUCCESS) {
+            Log.w(TAG, "tts.speak returned non-success code $res for chunk: $clean")
+            queuedUtterances.decrementAndGet()
         }
+    }
 
-        val utteranceId = "visper_${System.currentTimeMillis()}"
-        val result = tts?.speak(cleanText, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
-        if (result != TextToSpeech.SUCCESS) {
-            Log.w(TAG, "tts.speak returned non-success code $result")
+    /**
+     * Finalizes the streaming session, optionally pushing any remaining trailing text.
+     */
+    fun finishStreamingSession(remainingText: String = "") {
+        if (remainingText.isNotBlank()) {
+            enqueueStreamingChunk(remainingText)
+        }
+        isSessionFinalized = true
+        if (queuedUtterances.get() <= 0) {
             _isSpeaking.value = false
-            pendingUtteranceCallback = null
-            onDone?.invoke()
+            val cb = sessionCompletionCallback
+            sessionCompletionCallback = null
+            cb?.invoke()
         }
+    }
+
+    /**
+     * One-shot speech helper for instant replies or agentic action confirmations.
+     */
+    fun speak(text: String, onDone: (() -> Unit)? = null) {
+        startStreamingSession(onDone)
+        finishStreamingSession(text)
     }
 
     fun stop() {
@@ -107,8 +145,10 @@ class VisperTtsManager(private val context: Context) {
         } catch (e: Exception) {
             Log.w(TAG, "Error stopping TTS", e)
         }
+        queuedUtterances.set(0)
+        isSessionFinalized = true
         _isSpeaking.value = false
-        pendingUtteranceCallback = null
+        sessionCompletionCallback = null
     }
 
     fun shutdown() {
@@ -120,5 +160,14 @@ class VisperTtsManager(private val context: Context) {
         }
         tts = null
         isReady = false
+    }
+
+    private fun cleanForSpeech(text: String): String {
+        return text
+            .replace(Regex("[*#_~`>]"), "")
+            .replace(Regex("\\[.*?\\]"), "")
+            .replace(Regex("\\(https?://[^)]+\\)"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
     }
 }

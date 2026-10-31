@@ -13,6 +13,8 @@ import com.visper.app.document.DocumentParser
 import com.visper.app.document.ParsedDocument
 import com.visper.app.engine.InferenceEngine
 import com.visper.app.engine.VisperEngine
+import com.visper.app.imagegen.OnDeviceImageGenerator
+import com.visper.app.model.AgentAction
 import com.visper.app.model.Attachment
 import com.visper.app.model.ChatMessage
 import com.visper.app.model.EngineState
@@ -80,6 +82,7 @@ class TerminalViewModel(
     private val memoryStore = LocalMemoryStore(application)
     private val ttsManager = VisperTtsManager(application)
     private val deviceActionManager = DeviceActionManager(application)
+    private val imageGenerator = OnDeviceImageGenerator(application)
     private var generationJob: kotlinx.coroutines.Job? = null
 
     private val _uiState = MutableStateFlow(
@@ -482,7 +485,48 @@ class TerminalViewModel(
         )
         saveCurrentSession()
 
-        // 1. Evaluate Agentic Device Action Intent
+        // 1. Evaluate Image Generation Intent
+        if (imageGenerator.isImageGenRequest(displayPrompt)) {
+            val cleanPrompt = imageGenerator.extractPrompt(displayPrompt)
+            val result = imageGenerator.generate(displayPrompt)
+            val action = AgentAction(
+                actionType = "IMAGE_GEN",
+                title = "AI Image Generated",
+                detail = "Rendered on-device at 512x512 for: \"$cleanPrompt\"",
+                isSuccess = true
+            )
+            val replyText = "I've generated an on-device image for: \"$cleanPrompt\""
+            val aiMsg = ChatMessage(
+                sender = MessageSender.AI,
+                text = replyText,
+                action = action,
+                attachment = Attachment.Image(
+                    uri = result.uri,
+                    width = result.width,
+                    height = result.height
+                ),
+                isStreaming = false
+            )
+            _uiState.value = _uiState.value.copy(
+                messages = _uiState.value.messages + aiMsg
+            )
+            saveCurrentSession()
+
+            if (_uiState.value.isVoiceModeOpen) {
+                _uiState.value = _uiState.value.copy(
+                    voiceAiResponse = replyText,
+                    voiceModeStatus = VoiceModeStatus.SPEAKING
+                )
+                ttsManager.speak(replyText) {
+                    if (_uiState.value.isVoiceModeOpen) {
+                        _uiState.value = _uiState.value.copy(voiceModeStatus = VoiceModeStatus.IDLE)
+                    }
+                }
+            }
+            return
+        }
+
+        // 2. Evaluate Agentic Device Action Intent
         val action = deviceActionManager.evaluateAndExecute(displayPrompt)
         if (action != null) {
             val actionReply = when (action.actionType) {
@@ -544,6 +588,21 @@ class TerminalViewModel(
                 }
             }
 
+            if (_uiState.value.isVoiceModeOpen) {
+                _uiState.value = _uiState.value.copy(
+                    voiceAiResponse = "",
+                    voiceModeStatus = VoiceModeStatus.SPEAKING
+                )
+                ttsManager.startStreamingSession {
+                    if (_uiState.value.isVoiceModeOpen) {
+                        _uiState.value = _uiState.value.copy(voiceModeStatus = VoiceModeStatus.IDLE)
+                    }
+                }
+            }
+
+            val sentenceBuffer = StringBuilder()
+            val sentenceEndRegex = Regex("(?<=[.!?\\n])\\s+")
+
             val startTime = System.currentTimeMillis()
             var firstTokenTime: Long? = null
             val fullTextBuilder = StringBuilder()
@@ -558,6 +617,7 @@ class TerminalViewModel(
                     )
                     saveCurrentSession()
                     if (_uiState.value.isVoiceModeOpen) {
+                        ttsManager.stop()
                         _uiState.value = _uiState.value.copy(
                             voiceModeStatus = VoiceModeStatus.IDLE,
                             voiceAiResponse = "Inference error occurred."
@@ -575,10 +635,23 @@ class TerminalViewModel(
                         isDone = false,
                         ttftMs = firstTokenTime
                     )
+
                     if (_uiState.value.isVoiceModeOpen) {
                         _uiState.value = _uiState.value.copy(
                             voiceAiResponse = fullTextBuilder.toString()
                         )
+
+                        // Real-time punctuation-triggered streaming audio
+                        sentenceBuffer.append(token)
+                        val bufStr = sentenceBuffer.toString()
+                        val match = sentenceEndRegex.find(bufStr)
+                        if (match != null) {
+                            val sentence = bufStr.substring(0, match.range.last + 1).trim()
+                            sentenceBuffer.delete(0, match.range.last + 1)
+                            if (sentence.isNotBlank()) {
+                                ttsManager.enqueueStreamingChunk(sentence)
+                            }
+                        }
                     }
                 }
 
@@ -593,14 +666,10 @@ class TerminalViewModel(
 
             if (_uiState.value.isVoiceModeOpen) {
                 _uiState.value = _uiState.value.copy(
-                    voiceAiResponse = finalReply,
-                    voiceModeStatus = VoiceModeStatus.SPEAKING
+                    voiceAiResponse = finalReply
                 )
-                ttsManager.speak(finalReply) {
-                    if (_uiState.value.isVoiceModeOpen) {
-                        _uiState.value = _uiState.value.copy(voiceModeStatus = VoiceModeStatus.IDLE)
-                    }
-                }
+                val remaining = sentenceBuffer.toString().trim()
+                ttsManager.finishStreamingSession(remaining)
             }
         }
     }

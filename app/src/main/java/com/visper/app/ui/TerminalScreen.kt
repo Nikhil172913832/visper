@@ -684,6 +684,35 @@ private fun MessageBubble(
                         .padding(14.dp)
                 ) {
                     Column {
+                        // Generated or attached image in AI bubble
+                        if (message.attachment is Attachment.Image) {
+                            val context = LocalContext.current
+                            val bitmap = remember(message.attachment.uri) {
+                                try {
+                                    if (message.attachment.uri.scheme == "file" && message.attachment.uri.path != null) {
+                                        BitmapFactory.decodeFile(message.attachment.uri.path)
+                                    } else {
+                                        context.contentResolver.openInputStream(message.attachment.uri)?.use { stream ->
+                                            BitmapFactory.decodeStream(stream)
+                                        }
+                                    }
+                                } catch (_: Exception) { null }
+                            }
+
+                            if (bitmap != null) {
+                                Image(
+                                    bitmap = bitmap.asImageBitmap(),
+                                    contentDescription = "Generated AI image",
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 280.dp)
+                                        .clip(RoundedCornerShape(12.dp)),
+                                    contentScale = ContentScale.Crop
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                            }
+                        }
+
                         val textWithCursor = if (message.isStreaming) message.text + " ▮" else message.text
                         Text(
                             text = textWithCursor,
@@ -693,7 +722,7 @@ private fun MessageBubble(
                             )
                         )
 
-                        // Agentic Action Card (Flashlight, Timer, Clipboard, Math)
+                        // Agentic Action Card (Flashlight, Timer, Clipboard, Math, Image Gen)
                         if (message.action != null) {
                             Spacer(modifier = Modifier.height(10.dp))
                             AgentActionCard(
@@ -758,6 +787,7 @@ private fun AgentActionCard(
                     "TIMER" -> "⏱️"
                     "CLIPBOARD" -> "📋"
                     "CALCULATE" -> "🧮"
+                    "IMAGE_GEN" -> "🎨"
                     else -> "⚡"
                 }
                 Text(text = icon, fontSize = 20.sp)
