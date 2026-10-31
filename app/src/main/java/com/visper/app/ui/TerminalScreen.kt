@@ -38,15 +38,26 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import com.visper.app.memory.MemoryFact
+import com.visper.app.model.AgentAction
+import com.visper.app.session.SessionMetadata
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -108,25 +119,61 @@ fun TerminalScreen(
         }
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(AppBackground)
-            .statusBarsPadding()
-            .imePadding()
-            .navigationBarsPadding()
-    ) {
-        // --- 1. CLEAN APP HEADER ---
-        AppHeader(
-            engineState = uiState.engineState,
-            tokensPerSecond = uiState.metrics.tokensPerSecond,
-            hasMessages = uiState.messages.isNotEmpty(),
-            onOpenLab = { viewModel.openLabSheet() },
-            onClear = {
-                android.util.Log.d("TerminalScreen", "Clear clicked in UI!")
-                viewModel.clearConversation()
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val coroutineScope = rememberCoroutineScope()
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet(
+                drawerContainerColor = AppSurface,
+                drawerContentColor = TextPrimary,
+                modifier = Modifier.width(310.dp)
+            ) {
+                SessionsDrawerContent(
+                    sessions = uiState.sessions,
+                    currentSessionId = uiState.currentSessionId,
+                    memoryCount = uiState.memories.size,
+                    onSelectSession = { id ->
+                        viewModel.switchSession(id)
+                        coroutineScope.launch { drawerState.close() }
+                    },
+                    onNewChat = {
+                        viewModel.createNewSession()
+                        coroutineScope.launch { drawerState.close() }
+                    },
+                    onDeleteSession = { id ->
+                        viewModel.deleteSession(id)
+                    },
+                    onOpenMemoryVault = {
+                        viewModel.openMemoryVault()
+                        coroutineScope.launch { drawerState.close() }
+                    }
+                )
             }
-        )
+        }
+    ) {
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .background(AppBackground)
+                .statusBarsPadding()
+                .imePadding()
+                .navigationBarsPadding()
+        ) {
+            // --- 1. CLEAN APP HEADER ---
+            AppHeader(
+                sessionTitle = uiState.currentSessionTitle,
+                engineState = uiState.engineState,
+                tokensPerSecond = uiState.metrics.tokensPerSecond,
+                hasMessages = uiState.messages.isNotEmpty(),
+                onOpenDrawer = { coroutineScope.launch { drawerState.open() } },
+                onOpenLab = { viewModel.openLabSheet() },
+                onClear = {
+                    android.util.Log.d("TerminalScreen", "Clear clicked in UI!")
+                    viewModel.clearConversation()
+                }
+            )
 
         // --- 2. CONVERSATION STREAM OR WELCOME HERO ---
         if (uiState.messages.isEmpty()) {
@@ -145,7 +192,7 @@ fun TerminalScreen(
                     imagePicker.launch("image/*")
                 },
                 onVoiceClick = {
-                    viewModel.toggleVoiceRecording()
+                    viewModel.openVoiceMode()
                 }
             )
         } else {
@@ -163,7 +210,11 @@ fun TerminalScreen(
                     items = uiState.messages,
                     key = { it.id }
                 ) { msg ->
-                    MessageBubble(message = msg)
+                    MessageBubble(
+                        message = msg,
+                        isFlashlightActive = uiState.isFlashlightActive,
+                        onToggleFlashlight = { viewModel.toggleFlashlight() }
+                    )
                 }
 
                 item { Spacer(modifier = Modifier.height(8.dp)) }
@@ -187,30 +238,57 @@ fun TerminalScreen(
             onSubmit = { viewModel.submitPrompt() },
             onPickDoc = { docPicker.launch("*/*") },
             onPickImg = { imagePicker.launch("image/*") },
-            onToggleMic = { viewModel.toggleVoiceRecording() },
+            onToggleMic = { viewModel.openVoiceMode() },
             isRecording = uiState.isRecordingAudio,
             engineState = uiState.engineState
         )
-
-        // --- 5. AI LAB & HARDWARE INSPECTOR BOTTOM SHEET ---
-        if (uiState.isLabSheetOpen) {
-            HardwareInspectorSheet(
-                stats = uiState.systemStats,
-                onDismiss = { viewModel.closeLabSheet() },
-                onRunBenchmark = {
-                    viewModel.closeLabSheet()
-                    viewModel.submitCustomPrompt("Generate a concise 50-word test paragraph to benchmark your on-device token generation speed.")
-                }
-            )
-        }
     }
+}
+
+// --- 5. AI LAB & HARDWARE INSPECTOR BOTTOM SHEET ---
+if (uiState.isLabSheetOpen) {
+    HardwareInspectorSheet(
+        stats = uiState.systemStats,
+        onDismiss = { viewModel.closeLabSheet() },
+        onRunBenchmark = {
+            viewModel.closeLabSheet()
+            viewModel.submitCustomPrompt("Generate a concise 50-word test paragraph to benchmark your on-device token generation speed.")
+        }
+    )
+}
+
+// --- 6. LOCAL MEMORY VAULT BOTTOM SHEET ---
+if (uiState.isMemoryVaultOpen) {
+    MemoryVaultSheet(
+        memories = uiState.memories,
+        onDismiss = { viewModel.closeMemoryVault() },
+        onAddMemory = { fact -> viewModel.addManualMemory(fact) },
+        onDeleteMemory = { id -> viewModel.deleteMemory(id) },
+        onClearAll = { viewModel.clearAllMemories() }
+    )
+}
+
+// --- 7. CONVERSATIONAL VOICE MODE BOTTOM SHEET ---
+if (uiState.isVoiceModeOpen) {
+    VoiceModeSheet(
+        status = uiState.voiceModeStatus,
+        rmsDb = uiState.voiceRmsDb,
+        userTranscript = uiState.voiceTranscript,
+        aiResponse = uiState.voiceAiResponse,
+        onDismiss = { viewModel.closeVoiceMode() },
+        onTapOrb = { viewModel.toggleVoiceModeListening() },
+        onInterrupt = { viewModel.interruptVoiceSpeaking() }
+    )
+}
 }
 
 @Composable
 private fun AppHeader(
+    sessionTitle: String,
     engineState: EngineState,
     tokensPerSecond: Float,
     hasMessages: Boolean,
+    onOpenDrawer: () -> Unit,
     onOpenLab: () -> Unit,
     onClear: () -> Unit
 ) {
@@ -219,11 +297,30 @@ private fun AppHeader(
             .fillMaxWidth()
             .background(AppSurface)
             .border(width = 0.5.dp, color = AppBorder)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f, fill = false)
+        ) {
+            // Hamburger Drawer Button
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = AppSurfaceElevated,
+                onClick = onOpenDrawer
+            ) {
+                Text(
+                    text = "☰",
+                    fontSize = 17.sp,
+                    color = TextPrimary,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(10.dp))
+
             // Pulsing status dot
             val dotColor = when (engineState) {
                 EngineState.READY -> AppAccent
@@ -242,8 +339,9 @@ private fun AppHeader(
 
             Column {
                 Text(
-                    text = "Visper",
-                    style = AppHeaderStyle.copy(fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    text = if (sessionTitle == "New Chat") "Visper" else sessionTitle,
+                    style = AppHeaderStyle.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold),
+                    maxLines = 1
                 )
                 val statusText = when (engineState) {
                     EngineState.GENERATING -> if (tokensPerSecond > 0f) "Generating (%.1f tok/s)".format(tokensPerSecond) else "Thinking..."
@@ -258,6 +356,8 @@ private fun AppHeader(
                 )
             }
         }
+
+        Spacer(modifier = Modifier.width(8.dp))
 
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -476,7 +576,11 @@ private fun DiscoveryCard(
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage) {
+private fun MessageBubble(
+    message: ChatMessage,
+    isFlashlightActive: Boolean = false,
+    onToggleFlashlight: () -> Unit = {}
+) {
     val isUser = message.sender == MessageSender.USER
     val isAi = message.sender == MessageSender.AI
     val isError = message.sender == MessageSender.ERROR
@@ -589,6 +693,16 @@ private fun MessageBubble(message: ChatMessage) {
                             )
                         )
 
+                        // Agentic Action Card (Flashlight, Timer, Clipboard, Math)
+                        if (message.action != null) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            AgentActionCard(
+                                action = message.action,
+                                isFlashlightActive = isFlashlightActive,
+                                onToggleFlashlight = onToggleFlashlight
+                            )
+                        }
+
                         if (!message.isStreaming && message.timeToFirstTokenMs != null) {
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
@@ -613,6 +727,68 @@ private fun MessageBubble(message: ChatMessage) {
                     text = message.text,
                     style = AppBodyStyle.copy(color = AppRed, fontSize = 13.sp)
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AgentActionCard(
+    action: AgentAction,
+    isFlashlightActive: Boolean,
+    onToggleFlashlight: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = AppSurfaceElevated,
+        border = BorderStroke(0.5.dp, AppPrimary.copy(alpha = 0.5f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val icon = when (action.actionType) {
+                    "FLASHLIGHT_ON", "FLASHLIGHT_OFF" -> "🔦"
+                    "TIMER" -> "⏱️"
+                    "CLIPBOARD" -> "📋"
+                    "CALCULATE" -> "🧮"
+                    else -> "⚡"
+                }
+                Text(text = icon, fontSize = 20.sp)
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(
+                        text = action.title,
+                        style = AppBodyStyle.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                    )
+                    Text(
+                        text = action.detail,
+                        style = AppCaptionStyle.copy(fontSize = 11.sp, color = TextSecondary)
+                    )
+                }
+            }
+
+            if (action.actionType == "FLASHLIGHT_ON" || action.actionType == "FLASHLIGHT_OFF") {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isFlashlightActive) Color(0xFFEF4444).copy(alpha = 0.2f) else AppPrimary.copy(alpha = 0.2f),
+                    border = BorderStroke(0.5.dp, if (isFlashlightActive) Color(0xFFEF4444) else AppPrimary),
+                    onClick = onToggleFlashlight
+                ) {
+                    Text(
+                        text = if (isFlashlightActive) "Turn Off" else "Turn On",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (isFlashlightActive) Color(0xFFEF4444) else AppPrimary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
             }
         }
     }
@@ -1100,5 +1276,409 @@ private fun AuditMiniBadge(label: String, value: String) {
             text = value,
             style = AppCaptionStyle.copy(color = Color.White, fontWeight = FontWeight.Bold, fontSize = 10.sp)
         )
+    }
+}
+
+@Composable
+private fun SessionsDrawerContent(
+    sessions: List<SessionMetadata>,
+    currentSessionId: String,
+    memoryCount: Int,
+    onSelectSession: (String) -> Unit,
+    onNewChat: () -> Unit,
+    onDeleteSession: (String) -> Unit,
+    onOpenMemoryVault: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(16.dp)
+    ) {
+        // App Title & Brand
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(text = "✦", fontSize = 20.sp, color = AppPrimary, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Visper AI",
+                    style = AppHeaderStyle.copy(fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                )
+            }
+
+            // Pill: Offline
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFF133E2F))
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(5.dp)
+                        .clip(CircleShape)
+                        .background(AppAccent)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(text = "Offline", style = AppCaptionStyle.copy(fontSize = 10.sp, color = Color(0xFF6EE7B7)))
+            }
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        // "+ New Chat" Button
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = AppSurfaceElevated,
+            border = BorderStroke(1.dp, AppPrimary.copy(alpha = 0.6f)),
+            onClick = onNewChat,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(text = "＋", fontSize = 16.sp, color = AppPrimary, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "New Chat",
+                    style = AppBodyStyle.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            text = "CHAT SESSIONS",
+            style = AppCaptionStyle.copy(fontSize = 11.sp, color = TextMuted, fontWeight = FontWeight.Bold)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Session List
+        LazyColumn(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (sessions.isEmpty()) {
+                item {
+                    Text(
+                        text = "No saved chats yet.",
+                        style = AppCaptionStyle.copy(color = TextMuted),
+                        modifier = Modifier.padding(vertical = 12.dp)
+                    )
+                }
+            } else {
+                items(
+                    items = sessions,
+                    key = { it.id }
+                ) { session ->
+                    val isActive = session.id == currentSessionId
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (isActive) Color(0xFF1E293B) else AppSurfaceElevated,
+                        border = if (isActive) BorderStroke(1.dp, AppPrimary) else BorderStroke(0.5.dp, AppBorder),
+                        onClick = { onSelectSession(session.id) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = session.title,
+                                    style = AppBodyStyle.copy(
+                                        fontSize = 13.sp,
+                                        fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                                        color = if (isActive) Color.White else TextPrimary
+                                    ),
+                                    maxLines = 1
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                val timeText = formatRelativeTime(session.updatedAt)
+                                Text(
+                                    text = "$timeText • ${session.messageCount} msg",
+                                    style = AppCaptionStyle.copy(fontSize = 10.sp, color = TextMuted)
+                                )
+                            }
+
+                            // Delete button
+                            Surface(
+                                shape = CircleShape,
+                                color = Color.Transparent,
+                                onClick = { onDeleteSession(session.id) }
+                            ) {
+                                Text(
+                                    text = "✕",
+                                    fontSize = 12.sp,
+                                    color = TextMuted,
+                                    modifier = Modifier.padding(6.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Memory Vault Access Card at Bottom of Drawer
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFF191924),
+            border = BorderStroke(0.5.dp, Color(0xFF6366F1).copy(alpha = 0.5f)),
+            onClick = onOpenMemoryVault,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(text = "🧠", fontSize = 18.sp)
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Personal Memory Vault",
+                        style = AppBodyStyle.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                    )
+                    Text(
+                        text = "$memoryCount facts remembered • Local & Private",
+                        style = AppCaptionStyle.copy(fontSize = 10.sp, color = Color(0xFFA5B4FC))
+                    )
+                }
+                Text(text = "→", fontSize = 14.sp, color = Color(0xFFA5B4FC))
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MemoryVaultSheet(
+    memories: List<MemoryFact>,
+    onDismiss: () -> Unit,
+    onAddMemory: (String) -> Unit,
+    onDeleteMemory: (String) -> Unit,
+    onClearAll: () -> Unit
+) {
+    var newFactText by remember { mutableStateOf("") }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = AppSurface,
+        dragHandle = {
+            Box(
+                modifier = Modifier
+                    .padding(vertical = 10.dp)
+                    .size(width = 36.dp, height = 4.dp)
+                    .clip(CircleShape)
+                    .background(AppBorderLight)
+            )
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(text = "🧠", fontSize = 16.sp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Personal Memory Vault",
+                            style = AppHeaderStyle.copy(fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        )
+                    }
+                    Text(
+                        text = "Cross-session user profile & preferences (100% on-device)",
+                        style = AppCaptionStyle.copy(color = TextMuted)
+                    )
+                }
+
+                Surface(
+                    shape = CircleShape,
+                    color = AppSurfaceElevated,
+                    onClick = onDismiss
+                ) {
+                    Text(
+                        text = "✕",
+                        style = AppCaptionStyle.copy(color = TextSecondary, fontWeight = FontWeight.Bold),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+            }
+
+            // Input to add a new memory
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(AppSurfaceElevated)
+                    .border(0.5.dp, AppBorder, RoundedCornerShape(12.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    if (newFactText.isEmpty()) {
+                        Text(
+                            text = "e.g. My major is Computer Science...",
+                            style = AppCaptionStyle.copy(color = TextMuted)
+                        )
+                    }
+                    BasicTextField(
+                        value = newFactText,
+                        onValueChange = { newFactText = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        textStyle = AppBodyStyle.copy(fontSize = 13.sp, color = TextPrimary),
+                        cursorBrush = SolidColor(AppPrimary),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = {
+                            if (newFactText.isNotBlank()) {
+                                onAddMemory(newFactText)
+                                newFactText = ""
+                            }
+                        })
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = AppPrimary,
+                    onClick = {
+                        if (newFactText.isNotBlank()) {
+                            onAddMemory(newFactText)
+                            newFactText = ""
+                        }
+                    }
+                ) {
+                    Text(
+                        text = "+ Add",
+                        style = AppCaptionStyle.copy(color = Color.White, fontWeight = FontWeight.Bold),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+            }
+
+            // Stored Memories List
+            Text(
+                text = "STORED PREFERENCES (${memories.size})",
+                style = AppCaptionStyle.copy(color = TextMuted, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+            )
+
+            if (memories.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(AppSurfaceElevated)
+                        .padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No memories stored yet. Mention your preferences in chat (e.g. 'My name is Ashwin') and Visper will automatically remember them!",
+                        style = AppCaptionStyle.copy(color = TextMuted, textAlign = TextAlign.Center)
+                    )
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (item in memories) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(AppSurfaceElevated)
+                                .border(0.5.dp, AppBorder, RoundedCornerShape(10.dp))
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(text = "✦", fontSize = 12.sp, color = AppAccent)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = item.fact,
+                                    style = AppBodyStyle.copy(fontSize = 13.sp, color = TextPrimary)
+                                )
+                            }
+
+                            Surface(
+                                shape = CircleShape,
+                                color = Color.Transparent,
+                                onClick = { onDeleteMemory(item.id) }
+                            ) {
+                                Text(
+                                    text = "✕",
+                                    fontSize = 12.sp,
+                                    color = AppRed,
+                                    modifier = Modifier.padding(6.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (memories.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = AppSurfaceElevated,
+                    border = BorderStroke(0.5.dp, AppRed.copy(alpha = 0.5f)),
+                    onClick = onClearAll,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Clear All Memories",
+                        style = AppCaptionStyle.copy(color = AppRed, fontWeight = FontWeight.Medium),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(vertical = 10.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+private fun formatRelativeTime(timestamp: Long): String {
+    val diffSec = (System.currentTimeMillis() - timestamp) / 1000
+    return when {
+        diffSec < 60 -> "Just now"
+        diffSec < 3600 -> "${diffSec / 60}m ago"
+        diffSec < 86400 -> "${diffSec / 3600}h ago"
+        else -> "${diffSec / 86400}d ago"
     }
 }

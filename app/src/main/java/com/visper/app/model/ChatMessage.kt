@@ -31,12 +31,20 @@ sealed class Attachment {
     ) : Attachment()
 }
 
+data class AgentAction(
+    val actionType: String, // "FLASHLIGHT_ON", "FLASHLIGHT_OFF", "TIMER", "CLIPBOARD", "CALCULATE"
+    val title: String,
+    val detail: String,
+    val isSuccess: Boolean = true
+)
+
 data class ChatMessage(
     val id: String = java.util.UUID.randomUUID().toString(),
     val sender: MessageSender,
     val text: String,
     val timestamp: Long = System.currentTimeMillis(),
     val attachment: Attachment? = null,
+    val action: AgentAction? = null,
     val tokensPerSec: Float? = null,
     val timeToFirstTokenMs: Long? = null,
     val isStreaming: Boolean = false

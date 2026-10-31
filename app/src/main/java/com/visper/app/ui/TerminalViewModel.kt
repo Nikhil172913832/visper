@@ -5,8 +5,10 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.visper.app.agent.DeviceActionManager
 import com.visper.app.audio.AudioRecordingState
 import com.visper.app.audio.AudioTranscriptionManager
+import com.visper.app.audio.VisperTtsManager
 import com.visper.app.document.DocumentParser
 import com.visper.app.document.ParsedDocument
 import com.visper.app.engine.InferenceEngine
@@ -16,6 +18,11 @@ import com.visper.app.model.ChatMessage
 import com.visper.app.model.EngineState
 import com.visper.app.model.MessageSender
 import com.visper.app.model.PerformanceMetrics
+import com.visper.app.memory.LocalMemoryStore
+import com.visper.app.memory.MemoryFact
+import com.visper.app.session.ChatSession
+import com.visper.app.session.ChatSessionManager
+import com.visper.app.session.SessionMetadata
 import com.visper.app.vision.ImageProcessor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,6 +46,8 @@ data class SystemHealthStats(
 )
 
 data class TerminalUiState(
+    val currentSessionId: String = "",
+    val currentSessionTitle: String = "New Chat",
     val messages: List<ChatMessage> = emptyList(),
     val inputText: String = "",
     val attachedImageUri: Uri? = null,
@@ -49,7 +58,16 @@ data class TerminalUiState(
     val metrics: PerformanceMetrics = PerformanceMetrics(),
     val engineState: EngineState = EngineState.READY,
     val isLabSheetOpen: Boolean = false,
-    val systemStats: SystemHealthStats = SystemHealthStats()
+    val systemStats: SystemHealthStats = SystemHealthStats(),
+    val sessions: List<SessionMetadata> = emptyList(),
+    val memories: List<MemoryFact> = emptyList(),
+    val isMemoryVaultOpen: Boolean = false,
+    val isVoiceModeOpen: Boolean = false,
+    val voiceModeStatus: VoiceModeStatus = VoiceModeStatus.IDLE,
+    val voiceRmsDb: Float = 0f,
+    val voiceTranscript: String = "",
+    val voiceAiResponse: String = "",
+    val isFlashlightActive: Boolean = false
 )
 
 class TerminalViewModel(
@@ -58,16 +76,37 @@ class TerminalViewModel(
 
     private val engine: InferenceEngine = VisperEngine(application)
     private val audioManager = AudioTranscriptionManager(application)
+    private val sessionManager = ChatSessionManager(application)
+    private val memoryStore = LocalMemoryStore(application)
+    private val ttsManager = VisperTtsManager(application)
+    private val deviceActionManager = DeviceActionManager(application)
     private var generationJob: kotlinx.coroutines.Job? = null
 
     private val _uiState = MutableStateFlow(
-        TerminalUiState(
-            messages = emptyList()
-        )
+        TerminalUiState()
     )
     val uiState: StateFlow<TerminalUiState> = _uiState.asStateFlow()
 
     init {
+        // Initialize sessions and memory vault
+        val existingSessions = sessionManager.getSessionList()
+        val initialSession = if (existingSessions.isNotEmpty()) {
+            val latest = existingSessions.first()
+            sessionManager.loadSession(latest.id) ?: ChatSession()
+        } else {
+            val newSess = ChatSession()
+            sessionManager.saveSession(newSess)
+            newSess
+        }
+
+        _uiState.value = _uiState.value.copy(
+            currentSessionId = initialSession.id,
+            currentSessionTitle = initialSession.title,
+            messages = initialSession.messages,
+            sessions = sessionManager.getSessionList(),
+            memories = memoryStore.getMemories()
+        )
+
         viewModelScope.launch {
             engine.metrics.collect { metrics ->
                 _uiState.value = _uiState.value.copy(metrics = metrics)
@@ -90,32 +129,58 @@ class TerminalViewModel(
                     is AudioRecordingState.Recording -> {
                         _uiState.value = _uiState.value.copy(
                             isRecordingAudio = true,
-                            audioWaveformVisual = audioState.waveformVisual
+                            audioWaveformVisual = audioState.waveformVisual,
+                            voiceRmsDb = audioState.rmsDb
                         )
                     }
                     is AudioRecordingState.Success -> {
                         _uiState.value = _uiState.value.copy(
                             isRecordingAudio = false,
-                            audioWaveformVisual = "",
-                            inputText = if (_uiState.value.inputText.isBlank()) {
-                                audioState.text
-                            } else {
-                                "${_uiState.value.inputText} ${audioState.text}"
-                            }
+                            audioWaveformVisual = ""
                         )
-                        audioManager.reset()
+                        if (_uiState.value.isVoiceModeOpen) {
+                            val recognized = audioState.text.trim()
+                            audioManager.reset()
+                            if (recognized.isNotBlank()) {
+                                _uiState.value = _uiState.value.copy(
+                                    voiceTranscript = recognized,
+                                    voiceModeStatus = VoiceModeStatus.THINKING
+                                )
+                                submitCustomPrompt(recognized)
+                            } else {
+                                _uiState.value = _uiState.value.copy(
+                                    voiceModeStatus = VoiceModeStatus.IDLE
+                                )
+                            }
+                        } else {
+                            _uiState.value = _uiState.value.copy(
+                                inputText = if (_uiState.value.inputText.isBlank()) {
+                                    audioState.text
+                                } else {
+                                    "${_uiState.value.inputText} ${audioState.text}"
+                                }
+                            )
+                            audioManager.reset()
+                        }
                     }
                     is AudioRecordingState.Error -> {
                         _uiState.value = _uiState.value.copy(
                             isRecordingAudio = false,
                             audioWaveformVisual = ""
                         )
-                        appendMessage(
-                            ChatMessage(
-                                sender = MessageSender.ERROR,
-                                text = "Audio Error: ${audioState.message}"
+                        if (_uiState.value.isVoiceModeOpen) {
+                            _uiState.value = _uiState.value.copy(
+                                voiceModeStatus = VoiceModeStatus.IDLE,
+                                voiceTranscript = "Audio: ${audioState.message}"
                             )
-                        )
+                        } else {
+                            appendMessage(
+                                ChatMessage(
+                                    sender = MessageSender.ERROR,
+                                    text = "Audio Error: ${audioState.message}"
+                                )
+                            )
+                        }
                         audioManager.reset()
                     }
                 }
@@ -190,6 +255,106 @@ class TerminalViewModel(
             inputText = ""
         )
         clearAttachments()
+        saveCurrentSession()
+    }
+
+    fun createNewSession() {
+        cancelGeneration()
+        saveCurrentSession()
+        val newSession = ChatSession()
+        sessionManager.saveSession(newSession)
+        engine.resetContext()
+        _uiState.value = _uiState.value.copy(
+            currentSessionId = newSession.id,
+            currentSessionTitle = newSession.title,
+            messages = emptyList(),
+            inputText = "",
+            sessions = sessionManager.getSessionList()
+        )
+        clearAttachments()
+    }
+
+    fun switchSession(sessionId: String) {
+        if (sessionId == _uiState.value.currentSessionId) return
+        cancelGeneration()
+        saveCurrentSession()
+        val target = sessionManager.loadSession(sessionId) ?: return
+        engine.resetContext()
+        _uiState.value = _uiState.value.copy(
+            currentSessionId = target.id,
+            currentSessionTitle = target.title,
+            messages = target.messages,
+            inputText = "",
+            sessions = sessionManager.getSessionList()
+        )
+        clearAttachments()
+    }
+
+    fun deleteSession(sessionId: String) {
+        sessionManager.deleteSession(sessionId)
+        if (sessionId == _uiState.value.currentSessionId) {
+            val remaining = sessionManager.getSessionList()
+            if (remaining.isNotEmpty()) {
+                switchSession(remaining.first().id)
+            } else {
+                createNewSession()
+            }
+        } else {
+            _uiState.value = _uiState.value.copy(
+                sessions = sessionManager.getSessionList()
+            )
+        }
+    }
+
+    private fun saveCurrentSession() {
+        val sId = _uiState.value.currentSessionId
+        if (sId.isBlank()) return
+        val currentMsgs = _uiState.value.messages
+        val firstUserMsg = currentMsgs.firstOrNull { it.sender == MessageSender.USER }
+        val title = if (_uiState.value.currentSessionTitle == "New Chat" && firstUserMsg != null) {
+            sessionManager.generateTitleFromPrompt(firstUserMsg.text)
+        } else {
+            _uiState.value.currentSessionTitle
+        }
+
+        val session = ChatSession(
+            id = sId,
+            title = title,
+            updatedAt = System.currentTimeMillis(),
+            messages = currentMsgs
+        )
+        sessionManager.saveSession(session)
+        _uiState.value = _uiState.value.copy(
+            currentSessionTitle = title,
+            sessions = sessionManager.getSessionList()
+        )
+    }
+
+    fun openMemoryVault() {
+        _uiState.value = _uiState.value.copy(
+            isMemoryVaultOpen = true,
+            memories = memoryStore.getMemories()
+        )
+    }
+
+    fun closeMemoryVault() {
+        _uiState.value = _uiState.value.copy(isMemoryVaultOpen = false)
+    }
+
+    fun addManualMemory(fact: String) {
+        if (fact.isBlank()) return
+        memoryStore.addMemory(fact)
+        _uiState.value = _uiState.value.copy(memories = memoryStore.getMemories())
+    }
+
+    fun deleteMemory(id: String) {
+        memoryStore.deleteMemory(id)
+        _uiState.value = _uiState.value.copy(memories = memoryStore.getMemories())
+    }
+
+    fun clearAllMemories() {
+        memoryStore.clearAllMemories()
+        _uiState.value = _uiState.value.copy(memories = emptyList())
     }
 
     fun submitCustomPrompt(prompt: String) {
@@ -278,6 +443,15 @@ class TerminalViewModel(
             }
         }
 
+        // Auto-extract personal preference/fact into Memory Vault
+        val potentialMem = memoryStore.extractPotentialMemory(displayPrompt)
+        if (potentialMem != null) {
+            memoryStore.addMemory(potentialMem)
+            _uiState.value = _uiState.value.copy(
+                memories = memoryStore.getMemories()
+            )
+        }
+
         // Add user message
         val userMsg = ChatMessage(
             sender = MessageSender.USER,
@@ -298,7 +472,7 @@ class TerminalViewModel(
             }
         )
 
-        // Clear input text and attachments
+        // Clear input text and attachments and persist session
         _uiState.value = _uiState.value.copy(
             messages = _uiState.value.messages + userMsg,
             inputText = "",
@@ -306,6 +480,44 @@ class TerminalViewModel(
             attachedImageBitmap = null,
             attachedDoc = null
         )
+        saveCurrentSession()
+
+        // 1. Evaluate Agentic Device Action Intent
+        val action = deviceActionManager.evaluateAndExecute(displayPrompt)
+        if (action != null) {
+            val actionReply = when (action.actionType) {
+                "FLASHLIGHT_ON" -> "I've turned on your device flashlight."
+                "FLASHLIGHT_OFF" -> "I've turned off your device flashlight."
+                "TIMER" -> "I've scheduled a countdown timer on your device: ${action.detail}"
+                "CLIPBOARD" -> "I've copied the requested text to your device clipboard."
+                "CALCULATE" -> "The calculated result is: ${action.detail}"
+                else -> action.detail
+            }
+            val aiMsg = ChatMessage(
+                sender = MessageSender.AI,
+                text = actionReply,
+                action = action,
+                isStreaming = false
+            )
+            _uiState.value = _uiState.value.copy(
+                messages = _uiState.value.messages + aiMsg,
+                isFlashlightActive = deviceActionManager.isTorchActive()
+            )
+            saveCurrentSession()
+
+            if (_uiState.value.isVoiceModeOpen) {
+                _uiState.value = _uiState.value.copy(
+                    voiceAiResponse = actionReply,
+                    voiceModeStatus = VoiceModeStatus.SPEAKING
+                )
+                ttsManager.speak(actionReply) {
+                    if (_uiState.value.isVoiceModeOpen) {
+                        _uiState.value = _uiState.value.copy(voiceModeStatus = VoiceModeStatus.IDLE)
+                    }
+                }
+            }
+            return
+        }
 
         // Stream AI response
         generationJob = viewModelScope.launch {
@@ -320,7 +532,11 @@ class TerminalViewModel(
                 messages = _uiState.value.messages + initialAiMsg
             )
 
+            val memoryPrefix = memoryStore.getMemoryPromptContext()
             val contextPrefix = buildString {
+                if (memoryPrefix.isNotBlank()) {
+                    append(memoryPrefix)
+                }
                 if (currentDoc != null) {
                     append("Document text:\n\"\"\"\n")
                     append(currentDoc.textContent)
@@ -340,6 +556,13 @@ class TerminalViewModel(
                         "Error: ${e.message ?: e.javaClass.simpleName}",
                         isDone = true
                     )
+                    saveCurrentSession()
+                    if (_uiState.value.isVoiceModeOpen) {
+                        _uiState.value = _uiState.value.copy(
+                            voiceModeStatus = VoiceModeStatus.IDLE,
+                            voiceAiResponse = "Inference error occurred."
+                        )
+                    }
                 }
                 .collect { token ->
                     if (firstTokenTime == null) {
@@ -352,15 +575,85 @@ class TerminalViewModel(
                         isDone = false,
                         ttftMs = firstTokenTime
                     )
+                    if (_uiState.value.isVoiceModeOpen) {
+                        _uiState.value = _uiState.value.copy(
+                            voiceAiResponse = fullTextBuilder.toString()
+                        )
+                    }
                 }
 
+            val finalReply = fullTextBuilder.toString()
             updateStreamingMessage(
                 responseId,
-                fullTextBuilder.toString(),
+                finalReply,
                 isDone = true,
                 ttftMs = firstTokenTime
             )
+            saveCurrentSession()
+
+            if (_uiState.value.isVoiceModeOpen) {
+                _uiState.value = _uiState.value.copy(
+                    voiceAiResponse = finalReply,
+                    voiceModeStatus = VoiceModeStatus.SPEAKING
+                )
+                ttsManager.speak(finalReply) {
+                    if (_uiState.value.isVoiceModeOpen) {
+                        _uiState.value = _uiState.value.copy(voiceModeStatus = VoiceModeStatus.IDLE)
+                    }
+                }
+            }
         }
+    }
+
+    fun openVoiceMode() {
+        _uiState.value = _uiState.value.copy(
+            isVoiceModeOpen = true,
+            voiceModeStatus = VoiceModeStatus.LISTENING,
+            voiceTranscript = "",
+            voiceAiResponse = ""
+        )
+        audioManager.startListening()
+    }
+
+    fun closeVoiceMode() {
+        audioManager.stopListening()
+        ttsManager.stop()
+        _uiState.value = _uiState.value.copy(
+            isVoiceModeOpen = false,
+            voiceModeStatus = VoiceModeStatus.IDLE
+        )
+    }
+
+    fun toggleVoiceModeListening() {
+        if (_uiState.value.voiceModeStatus == VoiceModeStatus.SPEAKING) {
+            interruptVoiceSpeaking()
+        } else if (_uiState.value.voiceModeStatus == VoiceModeStatus.LISTENING) {
+            audioManager.stopListening()
+            _uiState.value = _uiState.value.copy(voiceModeStatus = VoiceModeStatus.IDLE)
+        } else {
+            _uiState.value = _uiState.value.copy(
+                voiceModeStatus = VoiceModeStatus.LISTENING,
+                voiceTranscript = "",
+                voiceAiResponse = ""
+            )
+            audioManager.startListening()
+        }
+    }
+
+    fun interruptVoiceSpeaking() {
+        ttsManager.stop()
+        _uiState.value = _uiState.value.copy(voiceModeStatus = VoiceModeStatus.IDLE)
+    }
+
+    fun toggleFlashlight() {
+        deviceActionManager.toggleTorch()
+        _uiState.value = _uiState.value.copy(
+            isFlashlightActive = deviceActionManager.isTorchActive()
+        )
+    }
+
+    fun copyMessageText(text: String) {
+        deviceActionManager.copyToClipboard(text)
     }
 
     private fun updateStreamingMessage(
@@ -392,6 +685,8 @@ class TerminalViewModel(
     override fun onCleared() {
         super.onCleared()
         audioManager.stopListening()
+        ttsManager.shutdown()
+        deviceActionManager.setTorch(false)
         engine.close()
     }
 }

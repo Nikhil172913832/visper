@@ -182,14 +182,6 @@ class LlamaCppEngine(
 
         _state.value = EngineState.GENERATING
 
-        val fullPrompt = buildString {
-            if (contextPrefix.isNotBlank()) {
-                append(contextPrefix.trim())
-                append("\n\n")
-            }
-            append(prompt.trim())
-        }
-
         // Build OpenAI Chat Completions JSON schema
         val root = JSONObject()
         root.put("model", modelFile?.nameWithoutExtension ?: "qwen3.5-0.8b")
@@ -202,10 +194,16 @@ class LlamaCppEngine(
         val messages = JSONArray()
         val sysMsg = JSONObject().apply {
             put("role", "system")
-            put("content", DEFAULT_SYSTEM_PROMPT)
+            val sysContent = if (contextPrefix.isNotBlank()) {
+                "$DEFAULT_SYSTEM_PROMPT\n\n$contextPrefix"
+            } else {
+                DEFAULT_SYSTEM_PROMPT
+            }
+            put("content", sysContent)
         }
         messages.put(sysMsg)
 
+        val userPrompt = prompt.trim()
         val userMsg = JSONObject()
         userMsg.put("role", "user")
 
@@ -213,7 +211,7 @@ class LlamaCppEngine(
             val contentArr = JSONArray()
             val textObj = JSONObject().apply {
                 put("type", "text")
-                put("text", fullPrompt.ifBlank { "Describe this image in detail and transcribe any visible handwriting or text." })
+                put("text", userPrompt.ifBlank { "Describe this image in detail and transcribe any visible handwriting or text." })
             }
             contentArr.put(textObj)
 
@@ -227,7 +225,7 @@ class LlamaCppEngine(
             contentArr.put(imgObj)
             userMsg.put("content", contentArr)
         } else {
-            userMsg.put("content", fullPrompt)
+            userMsg.put("content", userPrompt)
         }
 
         messages.put(userMsg)
