@@ -36,7 +36,7 @@ class LlamaCppEngine(
         private const val DEFAULT_SYSTEM_PROMPT =
             "You are Visper, an intelligent on-device AI assistant. Answer questions clearly, accurately, and concisely."
         private const val VISION_SYSTEM_PROMPT =
-            "You are Visper, an intelligent on-device multimodal AI assistant. Describe images, transcribe visible text accurately, and answer the user's questions clearly and concisely."
+            "You are Visper, an intelligent on-device multimodal AI assistant with vision capabilities. You see and process images directly. Accurately describe the provided image and transcribe any handwriting or text. Never claim you cannot see the image or ask to share it."
     }
 
     private var serverProcess: Process? = null
@@ -212,12 +212,7 @@ class LlamaCppEngine(
 
         if (image != null) {
             val contentArr = JSONArray()
-            val textObj = JSONObject().apply {
-                put("type", "text")
-                put("text", userPrompt.ifBlank { "Describe this image in detail and transcribe any visible handwriting or text." })
-            }
-            contentArr.put(textObj)
-
+            // 1. Put image_url FIRST so visual projector tokens precede prompt tokens in cross-attention
             val base64Img = ImageProcessor.bitmapToBase64Jpeg(image, maxDim = 640)
             val imgObj = JSONObject().apply {
                 put("type", "image_url")
@@ -226,6 +221,14 @@ class LlamaCppEngine(
                 })
             }
             contentArr.put(imgObj)
+
+            // 2. Put user instruction SECOND
+            val textObj = JSONObject().apply {
+                put("type", "text")
+                put("text", userPrompt.ifBlank { "Describe this image in detail and transcribe any visible handwriting or text." })
+            }
+            contentArr.put(textObj)
+
             userMsg.put("content", contentArr)
         } else {
             userMsg.put("content", userPrompt)

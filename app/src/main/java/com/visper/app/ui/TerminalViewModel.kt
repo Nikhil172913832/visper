@@ -657,7 +657,8 @@ class TerminalViewModel(
                     }
                 }
 
-            val finalReply = fullTextBuilder.toString()
+            val rawReply = fullTextBuilder.toString()
+            val finalReply = if (isVisionTask) cleanVisionResponse(rawReply) else rawReply
             updateStreamingMessage(
                 responseId,
                 finalReply,
@@ -725,6 +726,25 @@ class TerminalViewModel(
 
     fun copyMessageText(text: String) {
         deviceActionManager.copyToClipboard(text)
+    }
+
+    private fun cleanVisionResponse(text: String): String {
+        var cleaned = text
+        val disclaimerPrefixes = listOf(
+            Regex("(?i)^I can('?t| cannot) see the image directly[^:\\n]*[:\\n]*"),
+            Regex("(?i)^I can('?t| cannot) see any image[^:\\n]*[:\\n]*")
+        )
+        for (regex in disclaimerPrefixes) {
+            cleaned = cleaned.replaceFirst(regex, "").trimStart()
+        }
+        val disclaimerSuffixes = listOf(
+            Regex("(?i)\\n*If you can share the image[^\n]*$"),
+            Regex("(?i)\\n*Please provide an image with legible text[^\n]*$")
+        )
+        for (regex in disclaimerSuffixes) {
+            cleaned = cleaned.replace(regex, "").trimEnd()
+        }
+        return cleaned.ifBlank { text }
     }
 
     private fun updateStreamingMessage(

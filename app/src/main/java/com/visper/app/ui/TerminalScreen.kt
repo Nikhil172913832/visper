@@ -8,6 +8,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -112,10 +114,38 @@ fun TerminalScreen(
         uri?.let { viewModel.onDocumentSelected(it) }
     }
 
-    // Auto-scroll on new message or streaming tokens
-    LaunchedEffect(uiState.messages.size, uiState.messages.lastOrNull()?.text?.length) {
+    var userScrolledUp by remember { mutableStateOf(false) }
+
+    // Detect user manually scrolling away from the bottom
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) {
+            val layoutInfo = listState.layoutInfo
+            val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()
+            if (lastVisibleItem != null) {
+                val totalCount = layoutInfo.totalItemsCount
+                // If user scrolled up such that the bottom items are not visible
+                userScrolledUp = lastVisibleItem.index < totalCount - 2
+            }
+        }
+    }
+
+    // Scroll to bottom whenever a new message is added or session loaded
+    LaunchedEffect(uiState.messages.size) {
+        userScrolledUp = false
         if (uiState.messages.isNotEmpty()) {
-            listState.animateScrollToItem(uiState.messages.size - 1)
+            val bottomIndex = uiState.messages.size + 1
+            listState.scrollToItem(bottomIndex)
+        }
+    }
+
+    // Auto-scroll as tokens stream in to ensure the current line of output is always visible
+    val lastMessage = uiState.messages.lastOrNull()
+    val isStreaming = lastMessage?.isStreaming == true
+    val lastMessageLength = lastMessage?.text?.length ?: 0
+    LaunchedEffect(lastMessageLength, isStreaming) {
+        if (uiState.messages.isNotEmpty() && !userScrolledUp && !listState.isScrollInProgress) {
+            val bottomIndex = uiState.messages.size + 1
+            listState.scrollToItem(bottomIndex)
         }
     }
 
@@ -196,28 +226,66 @@ fun TerminalScreen(
                 }
             )
         } else {
-            LazyColumn(
-                state = listState,
+            Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                item { Spacer(modifier = Modifier.height(6.dp)) }
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    item { Spacer(modifier = Modifier.height(6.dp)) }
 
-                items(
-                    items = uiState.messages,
-                    key = { it.id }
-                ) { msg ->
-                    MessageBubble(
-                        message = msg,
-                        isFlashlightActive = uiState.isFlashlightActive,
-                        onToggleFlashlight = { viewModel.toggleFlashlight() }
-                    )
+                    items(
+                        items = uiState.messages,
+                        key = { it.id }
+                    ) { msg ->
+                        MessageBubble(
+                            message = msg,
+                            isFlashlightActive = uiState.isFlashlightActive,
+                            onToggleFlashlight = { viewModel.toggleFlashlight() }
+                        )
+                    }
+
+                    item { Spacer(modifier = Modifier.height(8.dp)) }
                 }
 
-                item { Spacer(modifier = Modifier.height(8.dp)) }
+                // Floating button to jump to bottom when user scrolled up
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = userScrolledUp && uiState.messages.isNotEmpty(),
+                    enter = fadeIn() + slideInVertically { it / 2 },
+                    exit = fadeOut() + slideOutVertically { it / 2 },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 20.dp, bottom = 12.dp)
+                ) {
+                    Surface(
+                        onClick = {
+                            coroutineScope.launch {
+                                userScrolledUp = false
+                                listState.animateScrollToItem(uiState.messages.size + 1)
+                            }
+                        },
+                        shape = CircleShape,
+                        color = AppSurfaceElevated.copy(alpha = 0.92f),
+                        border = BorderStroke(1.dp, AppBorder),
+                        shadowElevation = 6.dp,
+                        modifier = Modifier.size(38.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "↓",
+                                color = TextPrimary,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
             }
         }
 
