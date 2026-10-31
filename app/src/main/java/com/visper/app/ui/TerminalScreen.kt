@@ -221,9 +221,6 @@ fun TerminalScreen(
                     viewModel.prefillPrompt("Analyze and describe this image in detail:")
                     imagePicker.launch("image/*")
                 },
-                onDrawClick = {
-                    viewModel.prefillPrompt("/draw ")
-                },
                 onVoiceClick = {
                     viewModel.openVoiceMode()
                 }
@@ -309,7 +306,6 @@ fun TerminalScreen(
             onSubmit = { viewModel.submitPrompt() },
             onPickDoc = { docPicker.launch("*/*") },
             onPickImg = { imagePicker.launch("image/*") },
-            onDraw = { viewModel.prefillPrompt("/draw ") },
             onToggleMic = { viewModel.openVoiceMode() },
             isRecording = uiState.isRecordingAudio,
             engineState = uiState.engineState
@@ -479,7 +475,6 @@ private fun WelcomeHeroSection(
     onBenchmarkClick: () -> Unit,
     onPickDoc: () -> Unit,
     onPickImg: () -> Unit,
-    onDrawClick: () -> Unit,
     onVoiceClick: () -> Unit
 ) {
     Column(
@@ -593,10 +588,10 @@ private fun WelcomeHeroSection(
         ) {
             DiscoveryCard(
                 modifier = Modifier.weight(1f),
-                icon = "🎨",
-                title = "AI Canvas",
-                desc = "Generate 512x512 art",
-                onClick = onDrawClick
+                icon = "🎙️",
+                title = "Voice Mode",
+                desc = "Natural voice conversation",
+                onClick = onVoiceClick
             )
             DiscoveryCard(
                 modifier = Modifier.weight(1f),
@@ -1018,7 +1013,6 @@ private fun ModernInputBar(
     onSubmit: () -> Unit,
     onPickDoc: () -> Unit,
     onPickImg: () -> Unit,
-    onDraw: () -> Unit,
     onToggleMic: () -> Unit,
     isRecording: Boolean,
     engineState: EngineState
@@ -1038,7 +1032,6 @@ private fun ModernInputBar(
         ) {
             ActionButton(label = "Photo", icon = "📷", onClick = onPickImg)
             ActionButton(label = "Doc", icon = "📄", onClick = onPickDoc)
-            ActionButton(label = "Draw", icon = "🎨", onClick = onDraw)
             ActionButton(
                 label = if (isRecording) "Stop" else "Voice",
                 icon = if (isRecording) "⏹" else "🎙",

@@ -13,7 +13,6 @@ import com.visper.app.document.DocumentParser
 import com.visper.app.document.ParsedDocument
 import com.visper.app.engine.InferenceEngine
 import com.visper.app.engine.VisperEngine
-import com.visper.app.imagegen.OnDeviceImageGenerator
 import com.visper.app.model.AgentAction
 import com.visper.app.model.Attachment
 import com.visper.app.model.ChatMessage
@@ -82,7 +81,6 @@ class TerminalViewModel(
     private val memoryStore = LocalMemoryStore(application)
     private val ttsManager = VisperTtsManager(application)
     private val deviceActionManager = DeviceActionManager(application)
-    private val imageGenerator = OnDeviceImageGenerator(application)
     private var generationJob: kotlinx.coroutines.Job? = null
 
     private val _uiState = MutableStateFlow(
@@ -485,48 +483,7 @@ class TerminalViewModel(
         )
         saveCurrentSession()
 
-        // 1. Evaluate Image Generation Intent
-        if (imageGenerator.isImageGenRequest(displayPrompt)) {
-            val result = imageGenerator.generate(displayPrompt)
-            val subjectTitle = result.subject ?: result.prompt
-            val action = AgentAction(
-                actionType = "IMAGE_GEN",
-                title = "AI Canvas Artwork",
-                detail = "Rendered on-device at 512x512 for: \"$subjectTitle\"",
-                isSuccess = true
-            )
-            val replyText = "Here is an on-device rendering for: \"$subjectTitle\"."
-            val aiMsg = ChatMessage(
-                sender = MessageSender.AI,
-                text = replyText,
-                action = action,
-                attachment = Attachment.Image(
-                    uri = result.uri,
-                    width = result.width,
-                    height = result.height
-                ),
-                isStreaming = false
-            )
-            _uiState.value = _uiState.value.copy(
-                messages = _uiState.value.messages + aiMsg
-            )
-            saveCurrentSession()
-
-            if (_uiState.value.isVoiceModeOpen) {
-                _uiState.value = _uiState.value.copy(
-                    voiceAiResponse = replyText,
-                    voiceModeStatus = VoiceModeStatus.SPEAKING
-                )
-                ttsManager.speak(replyText) {
-                    if (_uiState.value.isVoiceModeOpen) {
-                        _uiState.value = _uiState.value.copy(voiceModeStatus = VoiceModeStatus.IDLE)
-                    }
-                }
-            }
-            return
-        }
-
-        // 2. Evaluate Agentic Device Action Intent
+        // 1. Evaluate Agentic Device Action Intent
         val action = deviceActionManager.evaluateAndExecute(displayPrompt)
         if (action != null) {
             val actionReply = when (action.actionType) {
