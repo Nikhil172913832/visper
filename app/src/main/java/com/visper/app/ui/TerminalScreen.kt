@@ -1635,7 +1635,7 @@ private fun MemoryVaultSheet(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "No memories stored yet. Mention your preferences in chat (e.g. 'My name is Ashwin') and Visper will automatically remember them!",
+                        text = "No memories stored yet. Mention your preferences in chat (e.g. 'My name is Alex' or 'I prefer concise code') and Visper will automatically remember them!",
                         style = AppCaptionStyle.copy(color = TextMuted, textAlign = TextAlign.Center)
                     )
                 }

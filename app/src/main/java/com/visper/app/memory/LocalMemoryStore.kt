@@ -82,9 +82,25 @@ class LocalMemoryStore(private val context: Context) {
         }
     }
 
+    fun getStoredUserName(): String? {
+        for (m in getMemories()) {
+            val f = m.fact.trim()
+            if (f.startsWith("Name:", ignoreCase = true)) {
+                val candidate = f.substring(5).trim()
+                if (candidate.isNotBlank()) return candidate
+            }
+            if (f.startsWith("The user's name is", ignoreCase = true)) {
+                val candidate = f.substring(18).trim()
+                if (candidate.isNotBlank()) return candidate
+            }
+        }
+        return null
+    }
+
     fun getMemoryPromptContext(): String {
         val memories = getMemories()
         if (memories.isEmpty()) return ""
+        val storedName = getStoredUserName()
         return buildString {
             append("\n[Profile of the Human User]:\n")
             for (m in memories.take(8)) {
@@ -99,9 +115,14 @@ class LocalMemoryStore(private val context: Context) {
                 append("- ").append(cleanFact).append("\n")
             }
             append("\nRULES:\n")
-            append("1. Your name is Visper. You are the AI assistant. Never call yourself by the user's name or claim the user's attributes.\n")
-            append("2. When answering questions about the user (e.g. \"Who am I?\", \"What is my name?\", \"What do I do?\"), address the user using \"You\" based on the profile above (e.g. \"Your name is ...\").\n")
-            append("3. For greetings, introduce yourself only as Visper.\n")
+            append("1. Your name is Visper. You are the AI assistant.\n")
+            if (storedName != null) {
+                append("2. The human user's name is $storedName. Never call yourself $storedName.\n")
+                append("3. When asked \"What is my name?\" or \"Who am I?\", tell the user: \"Your name is $storedName.\"\n")
+            } else {
+                append("2. Never adopt the user's name or identity. When answering questions about the user, address them using \"You\" based on the profile above.\n")
+            }
+            append("4. For greetings, introduce yourself only as Visper.\n")
         }
     }
 
