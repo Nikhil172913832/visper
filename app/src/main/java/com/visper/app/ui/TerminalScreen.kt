@@ -316,7 +316,7 @@ fun TerminalScreen(
             onClear = { viewModel.clearAttachments() }
         )
 
-        if (uiState.isRecordingAudio) {
+        if (uiState.isRecordingAudio && !uiState.isVoiceModeOpen) {
             AudioRecordingBanner(
                 waveformVisual = uiState.audioWaveformVisual,
                 onStop = { viewModel.stopVoiceRecording() }
@@ -381,7 +381,8 @@ if (uiState.isVoiceModeOpen) {
         onSelectLanguage = { viewModel.setVoiceLanguage(it) },
         onDismiss = { viewModel.closeVoiceMode() },
         onTapOrb = { viewModel.toggleVoiceModeListening() },
-        onInterrupt = { viewModel.interruptVoiceSpeaking() }
+        onInterrupt = { viewModel.interruptVoiceSpeaking() },
+        onOpenVoiceSettings = { viewModel.openOfflineVoiceSettings() }
     )
 }
 }

@@ -63,7 +63,8 @@ fun VoiceModeSheet(
     onSelectLanguage: (String) -> Unit = {},
     onDismiss: () -> Unit,
     onTapOrb: () -> Unit,
-    onInterrupt: () -> Unit
+    onInterrupt: () -> Unit,
+    onOpenVoiceSettings: () -> Unit = {}
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -328,6 +329,23 @@ fun VoiceModeSheet(
                             }
                         }
                     }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Surface(
+                onClick = onOpenVoiceSettings,
+                shape = RoundedCornerShape(8.dp),
+                color = AppSurface,
+                border = androidx.compose.foundation.BorderStroke(0.5.dp, AppBorder)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("📥", fontSize = 12.sp)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Manage Offline Voice Packs (Hindi / Punjabi / English)", fontSize = 11.sp, color = AppPrimary)
                 }
             }
 

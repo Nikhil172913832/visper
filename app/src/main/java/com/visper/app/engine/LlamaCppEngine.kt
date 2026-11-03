@@ -5,7 +5,9 @@ import android.graphics.Bitmap
 import android.os.Debug
 import android.util.Log
 import com.visper.app.model.EngineState
+import com.visper.app.model.LanguageDetector
 import com.visper.app.model.PerformanceMetrics
+import com.visper.app.model.SupportedLanguage
 import com.visper.app.vision.ImageProcessor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,16 +35,51 @@ class LlamaCppEngine(
         private const val TAG = "LlamaCppEngine"
         private const val SERVER_PORT = 8080
         private const val SERVER_HOST = "127.0.0.1"
-        private const val DEFAULT_SYSTEM_PROMPT =
-            "You are Visper, an intelligent, on-device multilingual AI assistant. " +
-            "You fluently understand and speak multiple languages including English, Hindi (हिंदी), Punjabi (ਪੰਜਾਬੀ), and Hinglish. " +
-            "When responding in Hindi, write natural, grammatically correct Hindi with proper Subject-Object-Verb (कर्ता-कर्म-क्रिया) structure and correct verb agreements (e.g. 'नमस्ते! मैं विस्पर हूँ। मैं आपकी क्या सहायता कर सकता हूँ?'). " +
-            "Avoid literal translations from English. Keep sentences clear, simple, concise, and natural without rambling or repeating words."
-        private const val VISION_SYSTEM_PROMPT =
-            "You are Visper, an intelligent on-device multilingual multimodal AI assistant with vision capabilities. " +
-            "You see and process images directly. Accurately describe the provided image and transcribe any handwriting or text in whatever language or script it appears. " +
-            "Respond in clean, natural, and grammatically correct sentences in the user's language (such as English, Hindi हिंदी, Punjabi ਪੰਜਾਬੀ, etc.). " +
-            "Never claim you cannot see the image or ask to share it."
+
+        fun buildSystemPrompt(targetLang: SupportedLanguage, hasImage: Boolean): String {
+            return when {
+                hasImage -> when (targetLang) {
+                    SupportedLanguage.ENGLISH ->
+                        "You are Visper, an intelligent on-device AI assistant with vision capabilities. " +
+                        "You are directly inspecting an image provided by the user. " +
+                        "Carefully inspect visual details, transcribe visible text accurately, and answer the user's questions. " +
+                        "The user is communicating in English. You must respond strictly and entirely in clear, natural, and professional English. " +
+                        "Do not respond in Hindi or any other language unless explicitly requested."
+
+                    SupportedLanguage.HINDI ->
+                        "You are Visper, an intelligent on-device multilingual AI assistant with vision capabilities. " +
+                        "You are directly inspecting an image provided by the user. " +
+                        "The user is communicating in Hindi. Respond strictly in clean, natural, and grammatically correct Hindi (हिंदी) " +
+                        "with proper Subject-Object-Verb (कर्ता-कर्म-क्रिया) structure and correct verb agreements. Keep sentences concise, clear, and direct."
+
+                    SupportedLanguage.PUNJABI ->
+                        "You are Visper, an intelligent on-device multilingual AI assistant with vision capabilities. " +
+                        "You are directly inspecting an image provided by the user. " +
+                        "The user is communicating in Punjabi. Respond strictly in clean, natural, and grammatically correct Punjabi (ਪੰਜਾਬੀ) " +
+                        "in proper Gurmukhi script with an authentic, helpful tone."
+                }
+                else -> when (targetLang) {
+                    SupportedLanguage.ENGLISH ->
+                        "You are Visper, an intelligent, helpful on-device AI assistant. " +
+                        "The user is communicating in English. " +
+                        "You must respond strictly and entirely in clear, natural, and professional English. " +
+                        "Do not respond in Hindi, Punjabi, or any other language unless explicitly requested. " +
+                        "Keep your answers direct, concise, and helpful."
+
+                    SupportedLanguage.HINDI ->
+                        "You are Visper, an intelligent on-device AI assistant. " +
+                        "The user is communicating in Hindi. " +
+                        "Respond in clean, natural, and grammatically correct Hindi (हिंदी) with proper Subject-Object-Verb (कर्ता-कर्म-क्रिया) structure and correct verb agreements. " +
+                        "Keep sentences concise, clear, and direct without rambling or literal word-by-word translations."
+
+                    SupportedLanguage.PUNJABI ->
+                        "You are Visper, an intelligent on-device AI assistant. " +
+                        "The user is communicating in Punjabi (ਪੰਜਾਬੀ). " +
+                        "Respond in clean, natural, and grammatically correct Punjabi in proper Gurmukhi script with a warm and helpful tone. " +
+                        "Keep sentences concise and clear."
+                }
+            }
+        }
     }
 
     private var serverProcess: Process? = null
@@ -113,6 +150,7 @@ class LlamaCppEngine(
                 "--host", SERVER_HOST,
                 "--port", SERVER_PORT.toString(),
                 "-c", "2048",
+                "-np", "1",
                 "-t", "4",
                 "--image-max-tokens", "512",
                 "--reasoning", "off"
@@ -137,11 +175,11 @@ class LlamaCppEngine(
                 try {
                     process.inputStream.bufferedReader().useLines { lines ->
                         lines.forEach { line ->
-                            Log.d(TAG, "[llama-server] $line")
+                            Log.i(TAG, "[llama-server] $line")
                         }
                     }
                 } catch (e: Exception) {
-                    Log.d(TAG, "Server stream ended: ${e.message}")
+                    Log.i(TAG, "Server stream ended: ${e.message}")
                 }
             }
 
@@ -200,10 +238,13 @@ class LlamaCppEngine(
         root.put("frequency_penalty", 0.1)
         root.put("presence_penalty", 0.1)
 
+        val userPrompt = prompt.trim()
+        val detectedLang = LanguageDetector.detect(userPrompt)
+
         val messages = JSONArray()
         val sysMsg = JSONObject().apply {
             put("role", "system")
-            val basePrompt = if (image != null) VISION_SYSTEM_PROMPT else DEFAULT_SYSTEM_PROMPT
+            val basePrompt = buildSystemPrompt(detectedLang, hasImage = (image != null))
             val sysContent = if (contextPrefix.isNotBlank()) {
                 "$basePrompt\n\n$contextPrefix"
             } else {
@@ -213,14 +254,13 @@ class LlamaCppEngine(
         }
         messages.put(sysMsg)
 
-        val userPrompt = prompt.trim()
         val userMsg = JSONObject()
         userMsg.put("role", "user")
 
         if (image != null) {
             val contentArr = JSONArray()
             // 1. Put image_url FIRST so visual projector tokens precede prompt tokens in cross-attention
-            val base64Img = ImageProcessor.bitmapToBase64Jpeg(image, maxDim = 640)
+            val base64Img = ImageProcessor.bitmapToBase64Jpeg(image, maxDim = 896)
             val imgObj = JSONObject().apply {
                 put("type", "image_url")
                 put("image_url", JSONObject().apply {

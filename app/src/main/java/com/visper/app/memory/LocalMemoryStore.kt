@@ -88,6 +88,9 @@ class LocalMemoryStore(private val context: Context) {
         return when {
             trim.startsWith("The user's name is ", ignoreCase = true) -> "Name: " + trim.substring(19).trim()
             trim.startsWith("User name is ", ignoreCase = true) -> "Name: " + trim.substring(13).trim()
+            trim.startsWith("मेरा नाम ", ignoreCase = true) -> "Name: " + trim.substring(9).replace(Regex("(?:है|hai|h).*"), "").trim()
+            trim.startsWith("ਮੇਰਾ ਨਾਮ ", ignoreCase = true) -> "Name: " + trim.substring(9).replace(Regex("(?:ਹੈ).*"), "").trim()
+            trim.startsWith("ਮੇਰਾ ਨਾਂ ", ignoreCase = true) -> "Name: " + trim.substring(9).replace(Regex("(?:ਹੈ).*"), "").trim()
             trim.startsWith("The user is a ", ignoreCase = true) -> "Role: " + trim.substring(14).trim()
             trim.startsWith("The user is ", ignoreCase = true) -> "Role: " + trim.substring(12).trim()
             trim.startsWith("The user studies ", ignoreCase = true) -> "Studies: " + trim.substring(17).trim()
@@ -102,6 +105,7 @@ class LocalMemoryStore(private val context: Context) {
             lower.startsWith("name:") -> "name"
             lower.startsWith("role:") || lower.startsWith("profession:") -> "role"
             lower.startsWith("studies:") -> "studies"
+            lower.startsWith("preference:") -> "preference"
             else -> null
         }
     }
@@ -181,11 +185,22 @@ class LocalMemoryStore(private val context: Context) {
             "remember ",
             "my name is ",
             "i am a ",
+            "i am an ",
             "i study ",
             "i am studying ",
             "i prefer ",
             "always reply in ",
-            "always respond in "
+            "always respond in ",
+            "mera naam hai ",
+            "mera naam ",
+            "मेरा नाम है ",
+            "मेरा नाम ",
+            "याद रखना कि ",
+            "याद रखो कि ",
+            "याद रखना: ",
+            "ਮੇਰਾ ਨਾਮ ",
+            "ਮੇਰਾ ਨਾਂ ",
+            "ਯਾਦ ਰੱਖਣਾ ਕਿ "
         )
 
         for (trigger in triggers) {
@@ -193,10 +208,11 @@ class LocalMemoryStore(private val context: Context) {
             if (idx != -1) {
                 val candidate = p.substring(idx + trigger.length).trim()
                 if (candidate.length in 2..120) {
+                    val cleanCand = candidate.takeWhile { it != '.' && it != '।' && it != ',' }
                     return when (trigger.trim()) {
-                        "remember that", "remember:", "remember" -> candidate
-                        "my name is" -> "Name: ${candidate.takeWhile { it != '.' && it != ',' }}"
-                        "i am a" -> "Role: $candidate"
+                        "remember that", "remember:", "remember", "याद रखना कि", "याद रखो कि", "याद रखना:", "ਯਾਦ ਰੱਖਣਾ ਕਿ" -> candidate
+                        "my name is", "mera naam hai", "mera naam", "मेरा नाम है", "मेरा नाम", "ਮੇਰਾ ਨਾਮ", "ਮੇਰਾ ਨਾਂ" -> "Name: $cleanCand"
+                        "i am a", "i am an" -> "Role: $candidate"
                         "i study", "i am studying" -> "Studies: $candidate"
                         "i prefer" -> "Preference: $candidate"
                         "always reply in", "always respond in" -> "Prefer responses in $candidate"

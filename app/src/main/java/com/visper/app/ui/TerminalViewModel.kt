@@ -28,6 +28,7 @@ import com.visper.app.session.ChatSession
 import com.visper.app.session.ChatSessionManager
 import com.visper.app.session.SessionMetadata
 import com.visper.app.vision.ImageProcessor
+import com.visper.app.vision.OcrExtractor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -207,15 +208,23 @@ class TerminalViewModel(
                         if (_uiState.value.isVoiceModeOpen) {
                             _uiState.value = _uiState.value.copy(
                                 voiceModeStatus = VoiceModeStatus.IDLE,
-                                voiceTranscript = "Audio: ${audioState.message}"
+                                voiceTranscript = if (audioState.isPackMissing) "Offline pack not found. Switch to English or check Voice Settings." else audioState.message
                             )
                         } else {
-                            appendMessage(
-                                ChatMessage(
-                                    sender = MessageSender.ERROR,
-                                    text = "Audio Error: ${audioState.message}"
+                            if (!audioState.message.contains("cancelled", ignoreCase = true) &&
+                                !audioState.message.contains("No speech", ignoreCase = true)) {
+                                val msg = if (audioState.isPackMissing) {
+                                    "${audioState.message}. You can download offline speech packs in Android Settings > Voice Input, or speak in English."
+                                } else {
+                                    "Audio: ${audioState.message}"
+                                }
+                                appendMessage(
+                                    ChatMessage(
+                                        sender = MessageSender.ERROR,
+                                        text = msg
+                                    )
                                 )
-                            )
+                            }
                         }
                         audioManager.reset()
                     }
@@ -268,6 +277,10 @@ class TerminalViewModel(
         _uiState.value = _uiState.value.copy(voiceLanguage = language)
         ttsManager.preferredLanguage = language
         audioManager.preferredLanguage = language
+    }
+
+    fun openOfflineVoiceSettings() {
+        audioManager.openOfflineVoiceSettings()
     }
 
     fun stopVoiceRecording() {
@@ -563,13 +576,32 @@ class TerminalViewModel(
         // 1. Evaluate Agentic Device Action Intent
         val action = deviceActionManager.evaluateAndExecute(displayPrompt)
         if (action != null) {
-            val actionReply = when (action.actionType) {
-                "FLASHLIGHT_ON" -> "I've turned on your device flashlight."
-                "FLASHLIGHT_OFF" -> "I've turned off your device flashlight."
-                "TIMER" -> "I've scheduled a countdown timer on your device: ${action.detail}"
-                "CLIPBOARD" -> "I've copied the requested text to your device clipboard."
-                "CALCULATE" -> "The calculated result is: ${action.detail}"
-                else -> action.detail
+            val detectedLang = com.visper.app.model.LanguageDetector.detect(displayPrompt, _uiState.value.voiceLanguage)
+            val actionReply = when (detectedLang) {
+                com.visper.app.model.SupportedLanguage.HINDI -> when (action.actionType) {
+                    "FLASHLIGHT_ON" -> "मैंने आपके डिवाइस की टॉर्च चालू कर दी है।"
+                    "FLASHLIGHT_OFF" -> "मैंने टॉर्च बंद कर दी है।"
+                    "TIMER" -> "मैंने टाइमर सेट कर दिया है: ${action.detail}"
+                    "CLIPBOARD" -> "अनुरोधित टेक्स्ट क्लिपबोर्ड पर कॉपी कर दिया गया है।"
+                    "CALCULATE" -> "गणना का परिणाम है: ${action.detail}"
+                    else -> action.detail
+                }
+                com.visper.app.model.SupportedLanguage.PUNJABI -> when (action.actionType) {
+                    "FLASHLIGHT_ON" -> "ਮੈਂ ਤੁਹਾਡੀ ਡਿਵਾਈਸ ਦੀ ਟਾਰਚ ਚਾਲੂ ਕਰ ਦਿੱਤੀ ਹੈ।"
+                    "FLASHLIGHT_OFF" -> "ਮੈਂ ਟਾਰਚ ਬੰਦ ਕਰ ਦਿੱਤੀ ਹੈ।"
+                    "TIMER" -> "ਮੈਂ ਟਾਈਮਰ ਸੈੱਟ ਕਰ ਦਿੱਤਾ ਹੈ: ${action.detail}"
+                    "CLIPBOARD" -> "ਟੈਕਸਟ ਕਲਿੱਪਬੋਰਡ 'ਤੇ ਕਾਪੀ ਕਰ ਦਿੱਤਾ ਗਿਆ ਹੈ।"
+                    "CALCULATE" -> "ਗਣਨਾ ਦਾ ਨਤੀਜਾ ਹੈ: ${action.detail}"
+                    else -> action.detail
+                }
+                com.visper.app.model.SupportedLanguage.ENGLISH -> when (action.actionType) {
+                    "FLASHLIGHT_ON" -> "I've turned on your device flashlight."
+                    "FLASHLIGHT_OFF" -> "I've turned off your device flashlight."
+                    "TIMER" -> "I've scheduled a countdown timer on your device: ${action.detail}"
+                    "CLIPBOARD" -> "I've copied the requested text to your device clipboard."
+                    "CALCULATE" -> "The calculated result is: ${action.detail}"
+                    else -> action.detail
+                }
             }
             val aiMsg = ChatMessage(
                 sender = MessageSender.AI,
@@ -610,12 +642,25 @@ class TerminalViewModel(
                 messages = _uiState.value.messages + initialAiMsg
             )
 
-            // For vision tasks, keep system context pure to avoid multimodal cross-attention pollution
+            // For vision tasks, extract high-fidelity text tokens via Google ML Kit OCR to augment mmproj
             val isVisionTask = currentImage != null
+            val ocrText = if (isVisionTask) {
+                try {
+                    OcrExtractor.extractText(currentImage)
+                } catch (e: Exception) {
+                    ""
+                }
+            } else ""
+
             val memoryPrefix = if (isVisionTask) "" else memoryStore.getMemoryPromptContext()
             val contextPrefix = buildString {
                 if (memoryPrefix.isNotBlank()) {
                     append(memoryPrefix)
+                }
+                if (ocrText.isNotBlank()) {
+                    append("Text detected and transcribed from image via on-device OCR:\n\"\"\"\n")
+                    append(ocrText)
+                    append("\n\"\"\"\n\n")
                 }
                 if (currentDoc != null) {
                     append("Document text:\n\"\"\"\n")
@@ -726,7 +771,9 @@ class TerminalViewModel(
         ttsManager.stop()
         _uiState.value = _uiState.value.copy(
             isVoiceModeOpen = false,
-            voiceModeStatus = VoiceModeStatus.IDLE
+            voiceModeStatus = VoiceModeStatus.IDLE,
+            isRecordingAudio = false,
+            audioWaveformVisual = ""
         )
     }
 
@@ -735,7 +782,11 @@ class TerminalViewModel(
             interruptVoiceSpeaking()
         } else if (_uiState.value.voiceModeStatus == VoiceModeStatus.LISTENING) {
             audioManager.stopListening()
-            _uiState.value = _uiState.value.copy(voiceModeStatus = VoiceModeStatus.IDLE)
+            _uiState.value = _uiState.value.copy(
+                voiceModeStatus = VoiceModeStatus.IDLE,
+                isRecordingAudio = false,
+                audioWaveformVisual = ""
+            )
         } else {
             _uiState.value = _uiState.value.copy(
                 voiceModeStatus = VoiceModeStatus.LISTENING,

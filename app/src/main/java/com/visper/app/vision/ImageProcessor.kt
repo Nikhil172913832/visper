@@ -116,8 +116,9 @@ object ImageProcessor {
     /**
      * Resizes bitmap down to max dimension [maxDim] and encodes to JPEG Base64
      * for native multimodal vision inference (mmproj).
+     * Uses 896px max dimension (divisible by 28 ViT patch grid) for sharp document and text recognition.
      */
-    fun bitmapToBase64Jpeg(bitmap: Bitmap, maxDim: Int = 640, quality: Int = 85): String {
+    fun bitmapToBase64Jpeg(bitmap: Bitmap, maxDim: Int = 896, quality: Int = 90): String {
         val width = bitmap.width
         val height = bitmap.height
         val maxOriginal = maxOf(width, height)
